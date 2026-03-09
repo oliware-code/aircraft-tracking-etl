@@ -121,22 +121,29 @@ if __name__ == "__main__":
     client = CachedOpenSkyClient(CLIENT_ID, CLIENT_SECRET)
 
     lufthansa747 = "3c4b2e"
+    dra_airplane = "4cacf5"
 
     states = client.get_states()
 
     # Quick check for the Queen (D-ABYN)
     if states:
+        aircraft_counter = 0
+        callsign_counter = 0
         for state in states:
             # print(state)
             db_cursor.execute(insert_aircraft_query, (state[0], state[2]))
             inserted_aircraft = db_cursor.rowcount
             if inserted_aircraft > 0:
-                print(f"{inserted_aircraft} new aircraft inserted: {state[0]} {state[2]}")
+                aircraft_counter += 1
+                print(f"Aircraft inserted: {state[0]}, {state[2]}")
             db_cursor.execute(insert_callsigh_query, (state[1].strip(),))
             inserted_route = db_cursor.rowcount
             if inserted_route > 0:
-                print(f"{inserted_route}: new route inserted {state[1].strip()}")
+                callsign_counter += 1
+                print(f"Route inserted: {state[1].strip()}")
         db_connection.commit()
+        print(f"New aircraft: {aircraft_counter}")
+        print(f"New callsign: {callsign_counter}")
 
         queen = next((s for s in states if s[0] == lufthansa747), None)
         status = f"AT {queen[6]}, {queen[5]}" if queen else "NOT SEEN"
