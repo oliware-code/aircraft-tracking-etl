@@ -44,7 +44,6 @@ def connect_database():
             # print('Database connection closed.')
 
 
-
 class CachedOpenSkyClient:
     def __init__(self, client_id, client_secret):
         self.client_id = client_id
@@ -89,7 +88,7 @@ class CachedOpenSkyClient:
 
         return self._get_new_token()["access_token"]
 
-    def get_states(self):
+    def get_all_states(self):
         token = self.get_valid_token()
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -99,7 +98,7 @@ class CachedOpenSkyClient:
             print(f"📡 API Call: {response.status_code} | Credits: {response.headers.get('X-Rate-Limit-Remaining')}")
 
             if response.status_code == 200:
-                return response.json().get("states", [])
+                return response.json()
             elif response.status_code == 401:
                 # Force a token refresh next time if we get a 401
                 if os.path.exists(CACHE_FILE): os.remove(CACHE_FILE)
@@ -118,18 +117,41 @@ if __name__ == "__main__":
     db_cursor = db_connection.cursor()
     insert_aircraft_query = ''' INSERT INTO aircraft(icao24, origin_country) VALUES (%s, %s) ON CONFLICT DO NOTHING; '''
     insert_callsigh_query = ''' INSERT INTO flight_routes(callsign) VALUES(%s) ON CONFLICT DO NOTHING'''
+    insert_state_query = ''' INSERT INTO states(timestamp, icao24, callsign, time_position, last_contact, longitude, latitide, barometric_altitude, on_ground, ground_speed, true_track, vertical_rate, sensors, geo_altitude, squawk, spi, position_source) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) '''
     client = CachedOpenSkyClient(CLIENT_ID, CLIENT_SECRET)
 
     lufthansa747 = "3c4b2e"
     dra_airplane = "4cacf5"
 
-    states = client.get_states()
+    states = client.get_all_states()
+    print(states['time'])
 
     # Quick check for the Queen (D-ABYN)
-    if states:
+    if states['states']:
         aircraft_counter = 0
         callsign_counter = 0
-        for state in states:
+        states_counter = 0
+        for state in states['states']:
+            state_values_to_insert = (
+                states['time'],  # timestamp (unique for all states)
+                state[0],  # icao24
+                state[1].strip() if state[1] else None,  # callsign (cleaned)
+                state[3],  # time_position
+                state[4],  # last_contact
+                state[5],  # longitude
+                state[6],  # latitude
+                state[7],  # barometric_altitude
+                state[8],  # on_ground
+                state[9] if state[9] else None,  # ground_speed (m/s to knots)
+                state[10],  # true_track
+                state[11],  # vertical_rate
+                state[12],  # sensors (psycopg2 handles list -> int[] automatically)
+                state[13],  # geo_altitude
+                state[14],  # squawk
+                state[15],  # spi
+                state[16]  # position_source
+                )
+
             # print(state)
             db_cursor.execute(insert_aircraft_query, (state[0], state[2]))
             inserted_aircraft = db_cursor.rowcount
@@ -141,9 +163,14 @@ if __name__ == "__main__":
             if inserted_route > 0:
                 callsign_counter += 1
                 print(f"Route inserted: {state[1].strip()}")
+            db_cursor.execute(insert_state_query, state_values_to_insert)
+            inserted_states = db_cursor.rowcount
+            if inserted_states > 0:
+                states_counter += 1
         db_connection.commit()
         print(f"New aircraft: {aircraft_counter}")
         print(f"New callsign: {callsign_counter}")
+        print(f"States inserted: {states_counter}")
 
         queen = next((s for s in states if s[0] == lufthansa747), None)
         status = f"AT {queen[6]}, {queen[5]}" if queen else "NOT SEEN"
