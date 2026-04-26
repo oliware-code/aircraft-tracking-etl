@@ -1,7 +1,7 @@
 from configparser import ConfigParser
 
 
-def config(filename="database.ini", section="esxi-bravo"):
+def config(filename="database.ini", section="RP5"):
     parser = ConfigParser()
     parser.read(filename)
     db = {}
