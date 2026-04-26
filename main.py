@@ -25,7 +25,7 @@ LOG_DIR = "logs"
 def configure_logging():
     os.makedirs(LOG_DIR, exist_ok=True)
     now = datetime.now()
-    log_filename = f"{now.year}-{now.isocalendar().week:02d}"
+    log_filename = f"{now.year}-{now.isocalendar().week:02d}.log"
     log_path = os.path.join(LOG_DIR, log_filename)
     logging.basicConfig(
         filename=log_path,
@@ -199,9 +199,9 @@ if __name__ == "__main__":
         print(f"States inserted: {states_counter}")
         logging.info(f"States inserted: {states_counter}")
 
-        queen = next((s for s in states if s[0] == lufthansa747), None)
-        status = f"AT {queen[6]}, {queen[5]}" if queen else "NOT SEEN"
-        print(f"👑 D-ABYN Status: {status}")
-        logging.info(f"👑 D-ABYN Status: {status}")
+        # queen = next((s for s in states if s[0] == lufthansa747), None)
+        # status = f"AT {queen[6]}, {queen[5]}" if queen else "NOT SEEN"
+        # print(f"👑 D-ABYN Status: {status}")
+        # logging.info(f"👑 D-ABYN Status: {status}")
     db_cursor.close()
     db_connection.close()
