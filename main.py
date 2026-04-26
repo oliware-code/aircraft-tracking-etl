@@ -1,6 +1,7 @@
 import requests
 import pause
 import time
+import logging
 from psycopg2.errors import ForeignKeyViolation
 import psycopg2
 from datetime import datetime, timedelta
@@ -18,6 +19,19 @@ from db_config import config
 TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
 API_URL = "https://opensky-network.org/api/states/all"
 CACHE_FILE = "opensky_token.json"
+LOG_DIR = "logs"
+
+
+def configure_logging():
+    os.makedirs(LOG_DIR, exist_ok=True)
+    now = datetime.now()
+    log_filename = f"{now.year}-{now.isocalendar().week:02d}"
+    log_path = os.path.join(LOG_DIR, log_filename)
+    logging.basicConfig(
+        filename=log_path,
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s"
+    )
 
 
 def connect_database():
@@ -35,6 +49,7 @@ def connect_database():
         # cursor.close()
     except(Exception, psycopg2.DatabaseError) as error:
         print(error)
+        logging.info(error)
     finally:
         if connection is not None:
             pass
@@ -53,6 +68,7 @@ class CachedOpenSkyClient:
     def _get_new_token(self):
         """Perform the OAuth2 exchange and save to disk."""
         print("🔑 Token expired or missing. Requesting new one...")
+        logging.info("🔑 Token expired or missing. Requesting new one...")
         payload = {
             "grant_type": "client_credentials",
             "client_id": self.client_id,
@@ -96,6 +112,7 @@ class CachedOpenSkyClient:
             response = self.session.get(API_URL, headers=headers, timeout=15)
             # Log credits for your Debian system monitoring
             print(f"📡 API Call: {response.status_code} | Credits: {response.headers.get('X-Rate-Limit-Remaining')}")
+            logging.info(f"📡 API Call: {response.status_code} | Credits: {response.headers.get('X-Rate-Limit-Remaining')}")
 
             if response.status_code == 200:
                 return response.json()
@@ -103,17 +120,21 @@ class CachedOpenSkyClient:
                 # Force a token refresh next time if we get a 401
                 if os.path.exists(CACHE_FILE): os.remove(CACHE_FILE)
                 print("⚠️ Token rejected. Cache cleared.")
+                logging.info("⚠️ Token rejected. Cache cleared.")
 
             response.raise_for_status()
         except Exception as e:
             print(f"❌ API Error: {e}")
+            logging.info(f"❌ API Error: {e}")
         return None
 
 
 # --- LOOP LOGIC ---
 if __name__ == "__main__":
+    configure_logging()
     db_connection = connect_database()
     print(db_connection)
+    logging.info(db_connection)
     db_cursor = db_connection.cursor()
     insert_aircraft_query = ''' INSERT INTO aircraft(icao24, origin_country) VALUES (%s, %s) ON CONFLICT DO NOTHING; '''
     insert_callsigh_query = ''' INSERT INTO flight_routes(callsign) VALUES(%s) ON CONFLICT DO NOTHING'''
@@ -125,6 +146,7 @@ if __name__ == "__main__":
 
     states = client.get_all_states()
     print(states['time'])
+    logging.info(states['time'])
 
     # Quick check for the Queen (D-ABYN)
     if states['states']:
@@ -158,22 +180,28 @@ if __name__ == "__main__":
             if inserted_aircraft > 0:
                 aircraft_counter += 1
                 print(f"Aircraft inserted: {state[0]}, {state[2]}")
+                logging.info(f"Aircraft inserted: {state[0]}, {state[2]}")
             db_cursor.execute(insert_callsigh_query, (state[1].strip(),))
             inserted_route = db_cursor.rowcount
             if inserted_route > 0:
                 callsign_counter += 1
                 print(f"Route inserted: {state[1].strip()}")
+                logging.info(f"Route inserted: {state[1].strip()}")
             db_cursor.execute(insert_state_query, state_values_to_insert)
             inserted_states = db_cursor.rowcount
             if inserted_states > 0:
                 states_counter += 1
         db_connection.commit()
         print(f"New aircraft: {aircraft_counter}")
+        logging.info(f"New aircraft: {aircraft_counter}")
         print(f"New callsign: {callsign_counter}")
+        logging.info(f"New callsign: {callsign_counter}")
         print(f"States inserted: {states_counter}")
+        logging.info(f"States inserted: {states_counter}")
 
         queen = next((s for s in states if s[0] == lufthansa747), None)
         status = f"AT {queen[6]}, {queen[5]}" if queen else "NOT SEEN"
         print(f"👑 D-ABYN Status: {status}")
+        logging.info(f"👑 D-ABYN Status: {status}")
     db_cursor.close()
     db_connection.close()
