@@ -1,15 +1,14 @@
-import requests
-import pause
-import time
-import logging
-from psycopg2.errors import ForeignKeyViolation
-import psycopg2
-from datetime import datetime, timedelta
 import json
+import logging
 import os
+import time
+from datetime import datetime
+
+import psycopg2
+import requests
+
 from credentials import CLIENT_ID, CLIENT_SECRET
 from db_config import config
-
 
 # --- CREDENTIALS ---
 # CLIENT_ID = credentials.CLIENT_ID
