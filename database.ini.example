@@ -1,0 +1,7 @@
+[RP5]
+host=YOUR_DB_HOST
+database=opensky
+;"options" line is to specify the schema, if it's different than public
+;options=-c search_path=development
+user=YOUR_DB_USER
+password=YOUR_DB_PASSWORD
