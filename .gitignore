@@ -1,0 +1,7 @@
+database.ini
+credentials.py
+opensky_token.json
+venv/
+__pycache__/
+*.pyc
+logs/
