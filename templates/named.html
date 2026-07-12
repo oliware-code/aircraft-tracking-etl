@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Named Aircraft — OpenSky Lookup</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    width: 100%;
+    margin: 1rem auto;
+    padding: 0 2rem;
+    line-height: 1.5;
+    box-sizing: border-box;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  p.subtitle { color: #777; margin-top: 0; }
+  a.back { color: #2563eb; text-decoration: none; font-size: 0.9rem; }
+  a.back:hover { text-decoration: underline; }
+  .status-badge {
+    display: inline-block;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    background: #dcfce7;
+    color: #166534;
+  }
+  .status-badge.ground { background: #fef3c7; color: #92400e; }
+  .status-duration-line {
+    color: #888;
+    font-size: 0.78rem;
+    margin-top: 0.3rem;
+  }
+  .status-duration { font-family: monospace; }
+  #map { height: 560px; border-radius: 8px; margin: 0.5rem 0; }
+  .top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .map-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #ccc;
+    font-size: 0.9rem;
+  }
+  .switch { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider {
+    position: absolute; cursor: pointer; inset: 0;
+    background: #4b5563; border-radius: 999px; transition: background 0.15s;
+  }
+  .switch .slider::before {
+    content: ""; position: absolute; height: 16px; width: 16px;
+    left: 3px; top: 3px; background: white; border-radius: 50%; transition: transform 0.15s;
+  }
+  .switch input:checked + .slider { background: #2563eb; }
+  .switch input:checked + .slider::before { transform: translateX(16px); }
+  table.aircraft {
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 1rem;
+  }
+  table.aircraft th, table.aircraft td {
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid #e5e7eb;
+    text-align: left;
+    font-size: 0.92rem;
+  }
+  table.aircraft th { color: #666; font-weight: 600; }
+  table.aircraft td.num { font-family: monospace; }
+  .live-since-stale {
+    color: #f87171 !important;
+    text-shadow: 0 0 4px #000, 0 0 4px #000, 0 0 8px #ef4444, 0 0 12px #ef4444 !important;
+  }
+  @media (prefers-color-scheme: dark) {
+    table.aircraft th, table.aircraft td { border-bottom-color: #333; }
+    table.aircraft th { color: #999; }
+    .status-badge { background: #14532d; color: #bbf7d0; }
+    .status-badge.ground { background: #78350f; color: #fde68a; }
+  }
+</style>
+</head>
+<body>
+  <div class="top-row">
+    <a class="back" href="/">&larr; Back to lookup</a>
+    <div class="map-controls">
+      <label class="switch">
+        <input type="checkbox" id="trail-toggle">
+        <span class="slider"></span>
+      </label>
+      <span>Show flight trails</span>
+    </div>
+  </div>
+
+  <div id="map"></div>
+
+  <table class="aircraft">
+    <thead>
+      <tr>
+        <th>Aircraft</th>
+        <th>icao24</th>
+        <th>Registration</th>
+        <th>Callsign</th>
+        <th>Status</th>
+        <th>Position</th>
+        <th>Altitude (m)</th>
+        <th>Speed (km/h)</th>
+        <th>Last contact</th>
+      </tr>
+    </thead>
+    <tbody id="aircraft-tbody">
+      {% for a in aircraft %}
+        <tr>
+          <td>
+            <strong>{{ a.friendly_name }}</strong><br>
+            <span style="color:#888; font-size:0.85rem;">
+              {{ [a.manufacturer, a.aircraft_type] | select | join(' · ') }}
+            </span>
+          </td>
+          <td class="num">{{ a.icao24 }}</td>
+          <td class="num">{{ a.registration or "—" }}</td>
+          {% if a.status %}
+            <td class="num">{{ a.status.callsign or "—" }}</td>
+            <td>
+              <span class="status-badge {{ 'ground' if a.status.status == 'on ground' else '' }}">{{ a.status.status }}</span>
+              {% if a.status_duration_label %}
+                <div class="status-duration-line">
+                  {{ a.status_duration_label }} <span class="status-duration" data-epoch="{{ a.status_duration_epoch }}">--:--:--</span>
+                </div>
+              {% endif %}
+            </td>
+            <td class="num">
+              {% if a.status.latitude is not none %}
+                {{ "%.4f"|format(a.status.latitude) }}, {{ "%.4f"|format(a.status.longitude) }}
+              {% else %}
+                &mdash;
+              {% endif %}
+            </td>
+            <td class="num">{{ a.status.altitude if a.status.altitude is not none else "—" }}</td>
+            <td class="num">{{ "%.1f"|format(a.status.ground_speed|float * 3.6) if a.status.ground_speed is not none else "—" }}</td>
+            <td class="num live-since" data-epoch="{{ a.status.last_seen_epoch }}">--:--:--</td>
+          {% else %}
+            <td colspan="6">No data available</td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/static/plane-icon.js"></script>
+  <script src="/static/live-timer.js"></script>
+  <script>
+    const initialMarkers = {{ markers | tojson }};
+    const map = L.map('map');
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 20,
+      attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+    }).addTo(map);
+
+    const markerLayer = L.layerGroup().addTo(map);
+    let trailLayers = [];
+
+    const trailToggle = document.getElementById('trail-toggle');
+    function applyTrailVisibility() {
+      trailLayers.forEach((layer) => {
+        if (trailToggle.checked) {
+          layer.addTo(map);
+        } else {
+          map.removeLayer(layer);
+        }
+      });
+    }
+    trailToggle.addEventListener('change', applyTrailVisibility);
+
+    function renderMarkers(markers) {
+      markerLayer.clearLayers();
+      trailLayers.forEach((layer) => map.removeLayer(layer));
+      trailLayers = [];
+
+      markers.forEach(m => {
+        (m.trail_segments || []).forEach(seg => {
+          if (seg.points.length < 2) return;
+          const segPoints = seg.points.map(p => [p.lat, p.lon]);
+          trailLayers.push(L.polyline(segPoints, seg.gap
+            ? { color: '#f97316', weight: 1, opacity: 0.7, dashArray: '4,4' }
+            : { color: '#38bdf8', weight: 1, opacity: 0.6 }));
+        });
+        L.marker([m.lat, m.lon], { icon: planeIcon(m.on_ground, m.heading, m.friendly_name, m.last_seen_epoch, m.route) })
+          .addTo(markerLayer)
+          .bindPopup(`<strong>${m.friendly_name}</strong><br>${m.callsign || '(no callsign)'}<br>${m.on_ground ? 'on ground' : 'airborne'}`);
+      });
+
+      applyTrailVisibility();
+    }
+
+    function fitMapToMarkers(markers) {
+      const points = markers.flatMap(m => [
+        [m.lat, m.lon],
+        ...(m.trail || []).map(p => [p.lat, p.lon]),
+      ]);
+      if (points.length === 1) {
+        map.setView(points[0], 6);
+      } else if (points.length > 1) {
+        map.fitBounds(points, { padding: [30, 30] });
+      } else {
+        map.setView([20, 0], 2);
+      }
+    }
+
+    function escapeHtml(value) {
+      if (value == null) return '';
+      return String(value).replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      ));
+    }
+
+    function renderTable(aircraft) {
+      const tbody = document.getElementById('aircraft-tbody');
+      tbody.innerHTML = aircraft.map(a => {
+        const infoLine = [a.manufacturer, a.aircraft_type].filter(Boolean).join(' · ');
+        const nameCell = `<td>
+            <strong>${escapeHtml(a.friendly_name)}</strong><br>
+            <span style="color:#888; font-size:0.85rem;">${escapeHtml(infoLine)}</span>
+          </td>
+          <td class="num">${escapeHtml(a.icao24)}</td>
+          <td class="num">${escapeHtml(a.registration) || '—'}</td>`;
+
+        if (!a.status) {
+          return `<tr>${nameCell}<td colspan="6">No data available</td></tr>`;
+        }
+
+        const s = a.status;
+        const badgeClass = 'status-badge' + (s.status === 'on ground' ? ' ground' : '');
+        const durationLine = a.status_duration_label
+          ? `<div class="status-duration-line">${escapeHtml(a.status_duration_label)} <span class="status-duration" data-epoch="${a.status_duration_epoch}">--:--:--</span></div>`
+          : '';
+        const position = s.latitude != null
+          ? `${s.latitude.toFixed(4)}, ${s.longitude.toFixed(4)}`
+          : '—';
+        const altitude = s.altitude != null ? s.altitude : '—';
+        const speed = s.ground_speed != null ? (s.ground_speed * 3.6).toFixed(1) : '—';
+
+        return `<tr>${nameCell}
+          <td class="num">${escapeHtml(s.callsign) || '—'}</td>
+          <td>
+            <span class="${badgeClass}">${escapeHtml(s.status)}</span>
+            ${durationLine}
+          </td>
+          <td class="num">${position}</td>
+          <td class="num">${altitude}</td>
+          <td class="num">${speed}</td>
+          <td class="num live-since" data-epoch="${s.last_seen_epoch}">--:--:--</td>
+        </tr>`;
+      }).join('');
+    }
+
+    renderMarkers(initialMarkers);
+    fitMapToMarkers(initialMarkers);
+
+    function refreshData() {
+      fetch('/named/data')
+        .then((r) => r.json())
+        .then((data) => {
+          renderMarkers(data.markers);
+          renderTable(data.aircraft);
+        })
+        .catch((err) => console.error('Failed to refresh named aircraft data:', err));
+    }
+    setInterval(refreshData, 120000);
+  </script>
+</body>
+</html>

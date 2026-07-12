@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Latest Snapshot — OpenSky Lookup</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    width: 100%;
+    margin: 3rem auto;
+    padding: 0 2rem;
+    line-height: 1.5;
+    box-sizing: border-box;
+  }
+  a.back { color: #2563eb; text-decoration: none; font-size: 0.9rem; }
+  a.back:hover { text-decoration: underline; }
+  .info-line {
+    color: #999;
+    font-size: 0.9rem;
+    margin: 0.5rem 0 1rem;
+  }
+  .info-line strong { color: #ccc; }
+  #map { height: 720px; border-radius: 8px; }
+</style>
+</head>
+<body>
+  <a class="back" href="/">&larr; Back to lookup</a>
+  <p class="info-line">
+    <strong>{{ count }}</strong> aircraft detected in the latest fetch
+    {% if fetched_at %}&mdash; <strong>{{ fetched_at.isoformat() }}</strong>{% endif %}
+  </p>
+
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/static/plane-icon.js"></script>
+  <script>
+    const markers = {{ markers | tojson }};
+    const map = L.map('map');
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 20,
+      attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+    }).addTo(map);
+
+    if (markers.length > 0) {
+      markers.forEach(m => {
+        L.marker([m.lat, m.lon], { icon: planeIcon(m.on_ground, m.heading) })
+          .addTo(map)
+          .bindPopup(
+            `<strong>${m.callsign || '(no callsign)'}</strong><br>` +
+            `icao24: ${m.icao24}<br>` +
+            `${m.on_ground ? 'on ground' : 'airborne'}<br>` +
+            (m.altitude != null ? `Altitude: ${m.altitude.toFixed(0)} m<br>` : '') +
+            (m.ground_speed != null ? `Speed: ${m.ground_speed.toFixed(1)} km/h` : '')
+          );
+      });
+      map.fitBounds(markers.map(m => [m.lat, m.lon]), { padding: [20, 20] });
+    } else {
+      map.setView([20, 0], 2);
+    }
+  </script>
+</body>
+</html>

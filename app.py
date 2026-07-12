@@ -1,0 +1,249 @@
+import os
+
+from flask import Flask, jsonify, render_template, request
+
+from db_connection import get_connection
+from queries import (
+    get_callsigns_by_icao24,
+    get_current_flight_trail,
+    get_icao24_by_callsign,
+    get_last_known_status,
+    get_latest_snapshot,
+    get_named_aircraft_status,
+    get_position_history,
+    get_route_for_callsign,
+    get_status_since,
+)
+
+app = Flask(__name__)
+
+HISTORY_DAYS = 7
+GAP_SECONDS = 600  # trail segments spanning >10 minutes between detections are drawn differently
+
+
+def _segment_trail(trail_points):
+    """Split a trail into runs, flagging the connector whenever two consecutive
+    detections are more than GAP_SECONDS apart (the aircraft stayed airborne but
+    wasn't seen in between, so that stretch of line is an interpolation, not a
+    tracked path).
+    """
+    segments = []
+    current = []
+    for i, p in enumerate(trail_points):
+        point = {"lat": float(p["latitude"]), "lon": float(p["longitude"])}
+        if i == 0:
+            current = [point]
+            continue
+        gap = (p["timestamp"] - trail_points[i - 1]["timestamp"]).total_seconds()
+        if gap > GAP_SECONDS:
+            segments.append({"gap": False, "points": current})
+            prev_point = {
+                "lat": float(trail_points[i - 1]["latitude"]),
+                "lon": float(trail_points[i - 1]["longitude"]),
+            }
+            segments.append({"gap": True, "points": [prev_point, point]})
+            current = [point]
+        else:
+            current.append(point)
+    if len(current) > 1:
+        segments.append({"gap": False, "points": current})
+    return segments
+
+
+def _with_epoch(status):
+    if status:
+        status["last_seen_epoch"] = int(status["last_seen"].timestamp())
+    return status
+
+
+def _status_duration(icao24):
+    """Return (label, epoch) describing how long the aircraft has held its current status."""
+    since = get_status_since(icao24)
+    if since is None:
+        return None, None
+    return "for", int(since["since"].timestamp())
+
+
+@app.route("/", methods=["GET", "POST"])
+def index():
+    results = None
+    status = None
+    history = None
+    status_duration_label = None
+    status_duration_epoch = None
+    error = None
+    mode = request.form.get("mode", "callsign")
+    query = ""
+
+    if request.method == "POST":
+        query = request.form.get("query", "").strip()
+        if not query:
+            error = "Please enter a value."
+        else:
+            try:
+                if mode == "callsign":
+                    results = get_icao24_by_callsign(query)
+                elif mode == "icao24":
+                    results = get_callsigns_by_icao24(query)
+                else:
+                    status = _with_epoch(get_last_known_status(query))
+                    if status is None:
+                        error = f"No data found for icao24 {query!r}."
+                    else:
+                        status_duration_label, status_duration_epoch = _status_duration(query)
+                        history = [
+                            {
+                                "lat": float(p["latitude"]),
+                                "lon": float(p["longitude"]),
+                                "timestamp": p["timestamp"].isoformat(),
+                                "callsign": p["callsign"],
+                                "on_ground": p["on_ground"],
+                            }
+                            for p in get_position_history(query, days=HISTORY_DAYS)
+                        ]
+            except Exception as exc:
+                error = f"Query failed: {exc}"
+
+    return render_template(
+        "index.html",
+        results=results,
+        status=status,
+        history=history,
+        history_days=HISTORY_DAYS,
+        status_duration_label=status_duration_label,
+        status_duration_epoch=status_duration_epoch,
+        error=error,
+        mode=mode,
+        query=query,
+    )
+
+
+def _build_named_data():
+    conn = get_connection()
+    try:
+        aircraft = get_named_aircraft_status(conn=conn)
+        markers = []
+        for a in aircraft:
+            a["status"] = _with_epoch(a["status"])
+
+            since = get_status_since(a["icao24"], conn=conn) if a["status"] else None
+            if since is None:
+                a["status_duration_label"], a["status_duration_epoch"] = None, None
+            else:
+                a["status_duration_label"] = "for"
+                a["status_duration_epoch"] = int(since["since"].timestamp())
+
+            if a["status"] and a["status"]["latitude"] is not None and a["status"]["longitude"] is not None:
+                trail = (
+                    get_current_flight_trail(a["icao24"], conn=conn, status=a["status"], since=since)
+                    if a["status"]["status"] != "on ground"
+                    else []
+                )
+                route = get_route_for_callsign(a["status"]["callsign"], conn=conn)
+                route_label = (
+                    f"{route['iata_origin']} → {route['iata_destination']}"
+                    if route and route["iata_origin"] and route["iata_destination"]
+                    else None
+                )
+                markers.append(
+                    {
+                        "lat": float(a["status"]["latitude"]),
+                        "lon": float(a["status"]["longitude"]),
+                        "friendly_name": a["friendly_name"],
+                        "callsign": a["status"]["callsign"],
+                        "on_ground": a["status"]["status"] == "on ground",
+                        "last_seen_epoch": a["status"]["last_seen_epoch"],
+                        "route": route_label,
+                        "heading": (
+                            0
+                            if a["status"]["status"] == "on ground"
+                            else float(a["status"]["true_track"]) if a["status"]["true_track"] is not None else 0
+                        ),
+                        "trail": [
+                            {"lat": float(p["latitude"]), "lon": float(p["longitude"])}
+                            for p in trail
+                        ],
+                        "trail_segments": _segment_trail(trail),
+                    }
+                )
+    finally:
+        conn.close()
+
+    return aircraft, markers
+
+
+def _serialize_named_aircraft(aircraft):
+    """JSON-safe view of the aircraft list (drops the raw `last_seen` datetime, keeps the epoch)."""
+    serialized = []
+    for a in aircraft:
+        status = a["status"]
+        serialized.append(
+            {
+                "icao24": a["icao24"],
+                "friendly_name": a["friendly_name"],
+                "registration": a["registration"],
+                "aircraft_type": a["aircraft_type"],
+                "manufacturer": a["manufacturer"],
+                "status_duration_label": a["status_duration_label"],
+                "status_duration_epoch": a["status_duration_epoch"],
+                "status": None
+                if status is None
+                else {
+                    "callsign": status["callsign"],
+                    "status": status["status"],
+                    "latitude": float(status["latitude"]) if status["latitude"] is not None else None,
+                    "longitude": float(status["longitude"]) if status["longitude"] is not None else None,
+                    "altitude": float(status["altitude"]) if status["altitude"] is not None else None,
+                    "ground_speed": float(status["ground_speed"]) if status["ground_speed"] is not None else None,
+                    "last_seen_epoch": status["last_seen_epoch"],
+                },
+            }
+        )
+    return serialized
+
+
+@app.route("/named")
+def named():
+    aircraft, markers = _build_named_data()
+    return render_template("named.html", aircraft=aircraft, markers=markers)
+
+
+@app.route("/named/data")
+def named_data():
+    aircraft, markers = _build_named_data()
+    return jsonify(aircraft=_serialize_named_aircraft(aircraft), markers=markers)
+
+
+@app.route("/latest")
+def latest():
+    fetched_at, aircraft = get_latest_snapshot()
+    markers = [
+        {
+            "lat": float(a["latitude"]),
+            "lon": float(a["longitude"]),
+            "icao24": a["icao24"],
+            "callsign": a["callsign"],
+            "on_ground": a["on_ground"],
+            "altitude": float(a["altitude"]) if a["altitude"] is not None else None,
+            "ground_speed": (
+                float(a["ground_speed"]) * 3.6 if a["ground_speed"] is not None else None
+            ),
+            "heading": (
+                0
+                if a["on_ground"]
+                else float(a["true_track"]) if a["true_track"] is not None else 0
+            ),
+        }
+        for a in aircraft
+    ]
+    return render_template(
+        "latest.html",
+        fetched_at=fetched_at,
+        markers=markers,
+        count=len(markers),
+    )
+
+
+if __name__ == "__main__":
+    # Enable the debugger explicitly with FLASK_DEBUG=1; never leave it on by default.
+    app.run(host="0.0.0.0", debug=os.environ.get("FLASK_DEBUG") == "1")
