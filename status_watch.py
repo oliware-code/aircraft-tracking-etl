@@ -1,3 +1,4 @@
+import html
 import logging
 from pathlib import Path
 
@@ -45,8 +46,8 @@ def check_status_changes(states, watchlist=None):
                 continue
 
             friendly_name = get_friendly_name(icao24, conn=conn)
-            identifier = f"{callsign} / {icao24}" if callsign else icao24
-            label = f"{friendly_name} ({identifier})" if friendly_name else identifier
+            identifier = f"{html.escape(callsign)} / {icao24}" if callsign else icao24
+            label = f"<b>{html.escape(friendly_name)}</b> ({identifier})" if friendly_name else identifier
 
             message = (
                 f"🛬 {label} has landed."
@@ -59,6 +60,6 @@ def check_status_changes(states, watchlist=None):
                 message += f" Route: {route['iata_origin']} → {route['iata_destination']}"
 
             logging.info(f"Watchlist status change: {message}")
-            send_notification(message)
+            send_notification(message, parse_mode="HTML")
     finally:
         conn.close()
