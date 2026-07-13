@@ -1,8 +1,0 @@
-# icao24 addresses to notify about when they go airborne or land.
-watched_aircraft:
-  - 3c670c  # 100th anniversary
-  - 0d0ff6  # Aeromexico's Kukulcan
-  - 0d09d0  # Aeromexico's Quetzalcoatl
-  - 0d121b  # Diana SJD-MEX
-  - 48455e  # KLM's Orange Pride
-  - 3c4b2e  # Lufthansa's Niedersachsen

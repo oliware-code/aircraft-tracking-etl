@@ -1,0 +1,3 @@
+# icao24 addresses to notify about when they go airborne or land.
+watched_aircraft:
+  - abc123  # replace with the icao24(s) you want to watch

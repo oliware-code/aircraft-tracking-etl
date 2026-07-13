@@ -66,9 +66,10 @@ venv/bin/pip install -r requirements.txt
 createdb opensky
 psql -d opensky -f schema.sql
 
-# Credentials (both files are gitignored)
+# Local config (all gitignored)
 cp database.ini.example database.ini        # fill in your DB host/user/password
 cp credentials.py.example credentials.py    # fill in your OpenSky API client id/secret
+cp notify_watchlist.yaml.example notify_watchlist.yaml    # icao24s to alert on status changes
 ```
 
 Run one ingest cycle manually:
