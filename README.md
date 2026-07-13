@@ -58,7 +58,7 @@ schema includes matching functional indexes (`idx_states_callsign_norm`,
 Requires Python 3.11+ and a PostgreSQL server.
 
 ```bash
-git clone <this repo> && cd aircraft_tracking
+git clone <this repo> && cd aircraft-tracking-etl
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
 
@@ -81,7 +81,7 @@ Schedule it (every 2 minutes here; OpenSky rate limits are credit-based, so pick
 interval that fits your account):
 
 ```cron
-*/2 * * * * /path/to/aircraft_tracking/cronjob_entry.sh
+*/2 * * * * /path/to/aircraft-tracking-etl/cronjob_entry.sh
 ```
 
 Run the web app:
