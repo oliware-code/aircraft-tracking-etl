@@ -10,6 +10,7 @@ CREATE TABLE aircraft (
     icao_aircraft_type text,
     manufacturer text,
     registered_owner_country_iso_name text,
+    enrichment_checked_at timestamptz,
     CONSTRAINT aircraft_pkey PRIMARY KEY (icao24)
 );
 

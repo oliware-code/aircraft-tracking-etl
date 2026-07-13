@@ -3,7 +3,13 @@ import time
 import requests
 
 ADSBDB_URL = "https://api.adsbdb.com/v0/callsign/{callsign}"
-MIN_SECONDS_BETWEEN_CALLS = 1.0
+ADSBDB_AIRCRAFT_URL = "https://api.adsbdb.com/v0/aircraft/{icao24}"
+# adsbdb's own rate limiter (per source IP) allows 512 requests per 60s before a
+# temporary ban. 3/sec keeps this comfortably under that even if the live path
+# (main.py, via cron) and a manually-run backfill happen to overlap, since each
+# process throttles independently in-memory: 3/sec x 2 processes = 360/60s, still
+# well under the 512 threshold.
+MIN_SECONDS_BETWEEN_CALLS = 1.0 / 3
 
 UPSERT_AIRLINE = """
     INSERT INTO airlines (icao, iata, name, radio_callsign, country, country_iso)
@@ -28,13 +34,27 @@ UPDATE_FLIGHT_ROUTE = """
 MARK_CHECKED = """
     UPDATE flight_routes SET enrichment_checked_at = now() WHERE callsign = %s
 """
+UPDATE_AIRCRAFT = """
+    UPDATE aircraft
+    SET aircraft_type = %s,
+        icao_aircraft_type = %s,
+        manufacturer = %s,
+        registration = %s,
+        registered_owner_country_iso_name = %s,
+        enrichment_checked_at = now()
+    WHERE icao24 = %s
+"""
+MARK_AIRCRAFT_CHECKED = """
+    UPDATE aircraft SET enrichment_checked_at = now() WHERE icao24 = %s
+"""
 
 _last_call_time = 0.0
 
 
 def _throttle():
-    """Block as needed so calls to adsbdb never happen more than once per second,
-    regardless of which caller (backfill script or live ingest) is asking."""
+    """Block as needed so calls to adsbdb never happen faster than
+    MIN_SECONDS_BETWEEN_CALLS, regardless of which caller (backfill script, live
+    route enrichment, or live aircraft enrichment) is asking."""
     global _last_call_time
     elapsed = time.monotonic() - _last_call_time
     if elapsed < MIN_SECONDS_BETWEEN_CALLS:
@@ -59,6 +79,20 @@ def _fetch_flightroute(callsign):
         # adsbdb returns a bare string like "unknown callsign" instead of 404 sometimes.
         return None
     return envelope.get("flightroute")
+
+
+def _fetch_aircraft(icao24):
+    """Return the adsbdb aircraft dict, or None if adsbdb has no record for this icao24."""
+    _throttle()
+    response = requests.get(ADSBDB_AIRCRAFT_URL.format(icao24=icao24), timeout=10)
+    if response.status_code in (404, 400):
+        return None
+    response.raise_for_status()
+    data = response.json()
+    envelope = data.get("response")
+    if not isinstance(envelope, dict):
+        return None
+    return envelope.get("aircraft")
 
 
 def _airport_row(airport):
@@ -144,4 +178,40 @@ def resolve_route(callsign, conn):
         "origin_inserted": origin_inserted,
         "destination_name": destination.get("name"),
         "destination_inserted": destination_inserted,
+    }
+
+
+def resolve_aircraft(icao24, conn):
+    """Look up `icao24` via adsbdb and store whatever it has: aircraft_type,
+    icao_aircraft_type, manufacturer, registration, and
+    registered_owner_country_iso_name on the aircraft table. Never touches
+    friendly_name or origin_country -- friendly_name is user-curated and
+    origin_country comes from OpenSky's own state vectors, not adsbdb.
+
+    Does not commit -- caller owns the transaction, same as resolve_route.
+    """
+    aircraft = _fetch_aircraft(icao24)
+    cur = conn.cursor()
+
+    if aircraft is None:
+        cur.execute(MARK_AIRCRAFT_CHECKED, (icao24,))
+        return {"found": False}
+
+    cur.execute(
+        UPDATE_AIRCRAFT,
+        (
+            aircraft.get("type"),
+            aircraft.get("icao_type"),
+            aircraft.get("manufacturer"),
+            aircraft.get("registration"),
+            aircraft.get("registered_owner_country_iso_name"),
+            icao24,
+        ),
+    )
+
+    return {
+        "found": True,
+        "registration": aircraft.get("registration"),
+        "manufacturer": aircraft.get("manufacturer"),
+        "aircraft_type": aircraft.get("type"),
     }

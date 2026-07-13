@@ -8,7 +8,7 @@ import requests
 
 from credentials import CLIENT_ID, CLIENT_SECRET
 from db_connection import get_connection
-from route_enrichment import resolve_route
+from route_enrichment import resolve_aircraft, resolve_route
 from status_watch import check_callsign_status_changes, check_status_changes
 
 # --- CONFIG ---
@@ -140,6 +140,12 @@ def ingest_snapshot(states, db_connection):
         if db_cursor.rowcount > 0:
             aircraft_counter += 1
             logging.info(f"Aircraft inserted: {icao24}, {state[2]}")
+            # Only a genuinely new icao24 triggers an adsbdb lookup, same reasoning
+            # as the callsign enrichment below.
+            try:
+                resolve_aircraft(icao24, db_connection)
+            except Exception as e:
+                logging.error(f"❌ Aircraft enrichment error for {icao24}: {e}")
         if callsign:
             db_cursor.execute(INSERT_CALLSIGN, (callsign,))
             if db_cursor.rowcount > 0:
