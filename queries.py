@@ -393,6 +393,122 @@ def get_watched_callsign_status(callsigns, conn=None):
     return results
 
 
+def get_recent_flights_by_callsign(callsign, limit=5, conn=None):
+    """Return up to `limit` most recent flight instances for this callsign, newest
+    first. A "flight" is one contiguous airborne segment (states between an
+    on_ground->airborne transition and the next airborne->on_ground one), so a
+    callsign that flies the same route daily gets one row per day, not one per
+    state vector. `in_progress` is true only for the single most recent flight if
+    it hasn't been followed by a later on-ground segment yet.
+    """
+    owns_conn = conn is None
+    conn = conn or get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH flagged AS (
+                    SELECT
+                        timestamp, icao24, on_ground, longitude, latitude,
+                        on_ground IS DISTINCT FROM LAG(on_ground) OVER (ORDER BY timestamp) AS changed
+                    FROM states
+                    WHERE TRIM(UPPER(callsign)) = TRIM(UPPER(%s))
+                ),
+                segments AS (
+                    SELECT
+                        timestamp, icao24, on_ground, longitude, latitude,
+                        SUM(CASE WHEN changed THEN 1 ELSE 0 END) OVER (ORDER BY timestamp) AS segment_id
+                    FROM flagged
+                ),
+                overall_max AS (
+                    SELECT MAX(segment_id) AS max_segment_id FROM segments
+                ),
+                airborne_segments AS (
+                    SELECT segment_id, MIN(timestamp) AS departed_at, MAX(timestamp) AS last_seen
+                    FROM segments
+                    WHERE NOT on_ground
+                    GROUP BY segment_id
+                )
+                SELECT
+                    a.departed_at, a.last_seen,
+                    (a.segment_id = overall_max.max_segment_id) AS in_progress,
+                    s.icao24, s.longitude, s.latitude
+                FROM airborne_segments a
+                CROSS JOIN overall_max
+                JOIN LATERAL (
+                    SELECT icao24, longitude, latitude
+                    FROM segments
+                    WHERE segment_id = a.segment_id
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                ) s ON true
+                ORDER BY a.last_seen DESC
+                LIMIT %s;
+                """,
+                (callsign, limit),
+            )
+            rows = cur.fetchall()
+    finally:
+        if owns_conn:
+            conn.close()
+
+    return [
+        {
+            "departed_at": departed_at,
+            "last_seen": last_seen,
+            "in_progress": in_progress,
+            "icao24": icao24,
+            "longitude": longitude,
+            "latitude": latitude,
+        }
+        for departed_at, last_seen, in_progress, icao24, longitude, latitude in rows
+    ]
+
+
+def get_watched_callsign_flights(callsigns, limit=5, conn=None):
+    """Return up to `limit` recent flight instances per watched callsign (see
+    get_recent_flights_by_callsign), each enriched with aircraft info and route,
+    ready for table display. Newest flight first within each callsign's group."""
+    owns_conn = conn is None
+    conn = conn or get_connection()
+    try:
+        route_cache = {}
+        results = []
+        for callsign in callsigns:
+            if callsign not in route_cache:
+                route_cache[callsign] = get_route_for_callsign(callsign, conn=conn)
+            route = route_cache[callsign]
+            route_label = (
+                f"{route['iata_origin']} → {route['iata_destination']}"
+                if route and route["iata_origin"] and route["iata_destination"]
+                else None
+            )
+
+            flights = get_recent_flights_by_callsign(callsign, limit=limit, conn=conn)
+            for flight in flights:
+                info = get_aircraft_info(flight["icao24"], conn=conn) if flight["icao24"] else None
+                results.append(
+                    {
+                        "callsign": callsign,
+                        "icao24": flight["icao24"],
+                        "friendly_name": (info["friendly_name"] if info else None),
+                        "registration": info["registration"] if info else None,
+                        "aircraft_type": info["aircraft_type"] if info else None,
+                        "manufacturer": info["manufacturer"] if info else None,
+                        "route": route_label,
+                        "departed_at": flight["departed_at"],
+                        "last_seen": flight["last_seen"],
+                        "in_progress": flight["in_progress"],
+                        "longitude": flight["longitude"],
+                        "latitude": flight["latitude"],
+                    }
+                )
+    finally:
+        if owns_conn:
+            conn.close()
+    return results
+
+
 def get_route_for_callsign(callsign, conn=None):
     """Return {iata_origin, iata_destination, operator} for a callsign's route, or None."""
     if not callsign:

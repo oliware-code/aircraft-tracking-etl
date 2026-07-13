@@ -19,6 +19,7 @@ from queries import (
     get_position_history,
     get_route_for_callsign,
     get_status_since,
+    get_watched_callsign_flights,
     get_watched_callsign_status,
 )
 from status_watch import load_callsign_watchlist
@@ -221,10 +222,17 @@ def _build_named_data():
                         "trail_segments": _segment_trail(trail),
                     }
                 )
+
+        callsign_flights = (
+            get_watched_callsign_flights(watched_callsigns, conn=conn) if watched_callsigns else []
+        )
+        for f in callsign_flights:
+            f["departed_epoch"] = int(f["departed_at"].timestamp())
+            f["last_seen_epoch"] = int(f["last_seen"].timestamp())
     finally:
         conn.close()
 
-    return aircraft, markers
+    return aircraft, markers, callsign_flights
 
 
 def _serialize_named_aircraft(aircraft):
@@ -258,18 +266,50 @@ def _serialize_named_aircraft(aircraft):
     return serialized
 
 
+def _serialize_callsign_flights(callsign_flights):
+    """JSON-safe view of the callsign flight list (drops the raw datetimes, keeps the epochs)."""
+    return [
+        {
+            "callsign": f["callsign"],
+            "icao24": f["icao24"],
+            "friendly_name": f["friendly_name"],
+            "registration": f["registration"],
+            "aircraft_type": f["aircraft_type"],
+            "manufacturer": f["manufacturer"],
+            "route": f["route"],
+            "in_progress": f["in_progress"],
+            "departed_epoch": f["departed_epoch"],
+            "last_seen_epoch": f["last_seen_epoch"],
+            "latitude": float(f["latitude"]) if f["latitude"] is not None else None,
+            "longitude": float(f["longitude"]) if f["longitude"] is not None else None,
+        }
+        for f in callsign_flights
+    ]
+
+
 @app.route("/named")
 def named():
-    aircraft, markers = _build_named_data()
+    aircraft, markers, callsign_flights = _build_named_data()
     airports = get_all_airports()
-    return render_template("named.html", aircraft=aircraft, markers=markers, airports=airports)
+    return render_template(
+        "named.html",
+        aircraft=aircraft,
+        markers=markers,
+        airports=airports,
+        callsign_flights=callsign_flights,
+    )
 
 
 @app.route("/named/data")
 def named_data():
-    aircraft, markers = _build_named_data()
+    aircraft, markers, callsign_flights = _build_named_data()
     airports = get_all_airports()
-    return jsonify(aircraft=_serialize_named_aircraft(aircraft), markers=markers, airports=airports)
+    return jsonify(
+        aircraft=_serialize_named_aircraft(aircraft),
+        markers=markers,
+        airports=airports,
+        callsign_flights=_serialize_callsign_flights(callsign_flights),
+    )
 
 
 @app.route("/events")

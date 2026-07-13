@@ -165,8 +165,42 @@
     {% endfor %}
   {% endmacro %}
 
+  {% macro callsign_table_head() %}
+    <thead>
+      <tr>
+        <th>Callsign</th>
+        <th>icao24</th>
+        <th>Registration</th>
+        <th>Route</th>
+        <th>Status</th>
+        <th>Departed</th>
+        <th>Last seen</th>
+      </tr>
+    </thead>
+  {% endmacro %}
+
+  {% macro callsign_flight_rows(items) %}
+    {% for f in items %}
+      <tr>
+        <td>
+          <strong>{{ f.callsign }}</strong><br>
+          <span style="color:#888; font-size:0.85rem;">
+            {{ [f.friendly_name, f.manufacturer, f.aircraft_type] | select | join(' · ') }}
+          </span>
+        </td>
+        <td class="num">{{ f.icao24 or "—" }}</td>
+        <td class="num">{{ f.registration or "—" }}</td>
+        <td class="num">{{ f.route or "—" }}</td>
+        <td>
+          <span class="status-badge {{ '' if f.in_progress else 'ground' }}">{{ "In progress" if f.in_progress else "Landed" }}</span>
+        </td>
+        <td class="num live-since" data-epoch="{{ f.departed_epoch }}">--:--:--</td>
+        <td class="num live-since" data-epoch="{{ f.last_seen_epoch }}">--:--:--</td>
+      </tr>
+    {% endfor %}
+  {% endmacro %}
+
   {% set icao24_tracked = aircraft | selectattr('tracked_by', 'equalto', 'icao24') | list %}
-  {% set callsign_tracked = aircraft | selectattr('tracked_by', 'equalto', 'callsign') | list %}
 
   <details class="tracked-section" open>
     <summary>Tracked aircraft (<span id="aircraft-count">{{ icao24_tracked | length }}</span>)</summary>
@@ -177,10 +211,10 @@
   </details>
 
   <details class="tracked-section" open>
-    <summary>Tracked callsigns (<span id="callsign-count">{{ callsign_tracked | length }}</span>)</summary>
+    <summary>Tracked callsigns (<span id="callsign-count">{{ callsign_flights | length }}</span>)</summary>
     <table class="aircraft">
-      {{ aircraft_table_head() }}
-      <tbody id="callsign-tbody">{{ aircraft_rows(callsign_tracked) }}</tbody>
+      {{ callsign_table_head() }}
+      <tbody id="callsign-tbody">{{ callsign_flight_rows(callsign_flights) }}</tbody>
     </table>
   </details>
 
@@ -317,12 +351,32 @@
 
     function renderTable(aircraft) {
       const icao24Tracked = aircraft.filter(a => a.tracked_by === 'icao24');
-      const callsignTracked = aircraft.filter(a => a.tracked_by === 'callsign');
-
       document.getElementById('aircraft-tbody').innerHTML = icao24Tracked.map(buildAircraftRowHtml).join('');
-      document.getElementById('callsign-tbody').innerHTML = callsignTracked.map(buildAircraftRowHtml).join('');
       document.getElementById('aircraft-count').textContent = icao24Tracked.length;
-      document.getElementById('callsign-count').textContent = callsignTracked.length;
+    }
+
+    function buildCallsignFlightRowHtml(f) {
+      const infoLine = [f.friendly_name, f.manufacturer, f.aircraft_type].filter(Boolean).join(' · ');
+      const badgeClass = 'status-badge' + (f.in_progress ? '' : ' ground');
+      const statusText = f.in_progress ? 'In progress' : 'Landed';
+
+      return `<tr>
+        <td>
+          <strong>${escapeHtml(f.callsign)}</strong><br>
+          <span style="color:#888; font-size:0.85rem;">${escapeHtml(infoLine)}</span>
+        </td>
+        <td class="num">${escapeHtml(f.icao24) || '—'}</td>
+        <td class="num">${escapeHtml(f.registration) || '—'}</td>
+        <td class="num">${escapeHtml(f.route) || '—'}</td>
+        <td><span class="${badgeClass}">${statusText}</span></td>
+        <td class="num live-since" data-epoch="${f.departed_epoch}">--:--:--</td>
+        <td class="num live-since" data-epoch="${f.last_seen_epoch}">--:--:--</td>
+      </tr>`;
+    }
+
+    function renderCallsignFlights(callsignFlights) {
+      document.getElementById('callsign-tbody').innerHTML = callsignFlights.map(buildCallsignFlightRowHtml).join('');
+      document.getElementById('callsign-count').textContent = callsignFlights.length;
     }
 
     renderMarkers(initialMarkers);
@@ -334,6 +388,7 @@
         .then((data) => {
           renderMarkers(data.markers);
           renderTable(data.aircraft);
+          renderCallsignFlights(data.callsign_flights);
           renderAirports(data.airports);
         })
         .catch((err) => console.error('Failed to refresh named aircraft data:', err));
