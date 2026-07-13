@@ -56,6 +56,19 @@ CREATE TABLE airlines (
     CONSTRAINT airlines_pkey PRIMARY KEY (icao)
 );
 
+CREATE TABLE airports (
+    iata text NOT NULL,
+    icao text,
+    name text,
+    municipality text,
+    country text,
+    country_iso text,
+    latitude numeric,
+    longitude numeric,
+    elevation integer,
+    CONSTRAINT airports_pkey PRIMARY KEY (iata)
+);
+
 -- Foreign keys
 ALTER TABLE states
     ADD CONSTRAINT aircraft_fk FOREIGN KEY (icao24) REFERENCES aircraft(icao24);
