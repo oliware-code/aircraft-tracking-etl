@@ -59,10 +59,18 @@
   }
   .switch input:checked + .slider { background: #2563eb; }
   .switch input:checked + .slider::before { transform: translateX(16px); }
+  .tracked-section {
+    margin-top: 1rem;
+  }
+  .tracked-section summary {
+    cursor: pointer;
+    font-weight: 600;
+    padding: 0.3rem 0;
+  }
   table.aircraft {
     border-collapse: collapse;
     width: 100%;
-    margin-top: 1rem;
+    margin-top: 0.5rem;
   }
   table.aircraft th, table.aircraft td {
     padding: 0.5rem 0.6rem;
@@ -103,7 +111,7 @@
 
   <div id="map"></div>
 
-  <table class="aircraft">
+  {% macro aircraft_table_head() %}
     <thead>
       <tr>
         <th>Aircraft</th>
@@ -117,44 +125,64 @@
         <th>Last contact</th>
       </tr>
     </thead>
-    <tbody id="aircraft-tbody">
-      {% for a in aircraft %}
-        <tr>
+  {% endmacro %}
+
+  {% macro aircraft_rows(items) %}
+    {% for a in items %}
+      <tr>
+        <td>
+          <strong>{{ a.friendly_name }}</strong><br>
+          <span style="color:#888; font-size:0.85rem;">
+            {{ [a.manufacturer, a.aircraft_type] | select | join(' · ') }}
+          </span>
+        </td>
+        <td class="num">{{ a.icao24 }}</td>
+        <td class="num">{{ a.registration or "—" }}</td>
+        {% if a.status %}
+          <td class="num">{{ a.status.callsign or "—" }}</td>
           <td>
-            <strong>{{ a.friendly_name }}</strong><br>
-            <span style="color:#888; font-size:0.85rem;">
-              {{ [a.manufacturer, a.aircraft_type] | select | join(' · ') }}
-            </span>
+            <span class="status-badge {{ 'ground' if a.status.status == 'on ground' else '' }}">{{ a.status.status }}</span>
+            {% if a.status_duration_label %}
+              <div class="status-duration-line">
+                {{ a.status_duration_label }} <span class="status-duration" data-epoch="{{ a.status_duration_epoch }}">--:--:--</span>
+              </div>
+            {% endif %}
           </td>
-          <td class="num">{{ a.icao24 }}</td>
-          <td class="num">{{ a.registration or "—" }}</td>
-          {% if a.status %}
-            <td class="num">{{ a.status.callsign or "—" }}</td>
-            <td>
-              <span class="status-badge {{ 'ground' if a.status.status == 'on ground' else '' }}">{{ a.status.status }}</span>
-              {% if a.status_duration_label %}
-                <div class="status-duration-line">
-                  {{ a.status_duration_label }} <span class="status-duration" data-epoch="{{ a.status_duration_epoch }}">--:--:--</span>
-                </div>
-              {% endif %}
-            </td>
-            <td class="num">
-              {% if a.status.latitude is not none %}
-                {{ "%.4f"|format(a.status.latitude) }}, {{ "%.4f"|format(a.status.longitude) }}
-              {% else %}
-                &mdash;
-              {% endif %}
-            </td>
-            <td class="num">{{ a.status.altitude if a.status.altitude is not none else "—" }}</td>
-            <td class="num">{{ "%.1f"|format(a.status.ground_speed|float * 3.6) if a.status.ground_speed is not none else "—" }}</td>
-            <td class="num live-since" data-epoch="{{ a.status.last_seen_epoch }}">--:--:--</td>
-          {% else %}
-            <td colspan="6">No data available</td>
-          {% endif %}
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+          <td class="num">
+            {% if a.status.latitude is not none %}
+              {{ "%.4f"|format(a.status.latitude) }}, {{ "%.4f"|format(a.status.longitude) }}
+            {% else %}
+              &mdash;
+            {% endif %}
+          </td>
+          <td class="num">{{ a.status.altitude if a.status.altitude is not none else "—" }}</td>
+          <td class="num">{{ "%.1f"|format(a.status.ground_speed|float * 3.6) if a.status.ground_speed is not none else "—" }}</td>
+          <td class="num live-since" data-epoch="{{ a.status.last_seen_epoch }}">--:--:--</td>
+        {% else %}
+          <td colspan="6">No data available</td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+  {% endmacro %}
+
+  {% set icao24_tracked = aircraft | selectattr('tracked_by', 'equalto', 'icao24') | list %}
+  {% set callsign_tracked = aircraft | selectattr('tracked_by', 'equalto', 'callsign') | list %}
+
+  <details class="tracked-section" open>
+    <summary>Tracked aircraft (<span id="aircraft-count">{{ icao24_tracked | length }}</span>)</summary>
+    <table class="aircraft">
+      {{ aircraft_table_head() }}
+      <tbody id="aircraft-tbody">{{ aircraft_rows(icao24_tracked) }}</tbody>
+    </table>
+  </details>
+
+  <details class="tracked-section" open>
+    <summary>Tracked callsigns (<span id="callsign-count">{{ callsign_tracked | length }}</span>)</summary>
+    <table class="aircraft">
+      {{ aircraft_table_head() }}
+      <tbody id="callsign-tbody">{{ aircraft_rows(callsign_tracked) }}</tbody>
+    </table>
+  </details>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/static/plane-icon.js"></script>
@@ -221,7 +249,7 @@
             ? { color: '#f97316', weight: 1, opacity: 0.7, dashArray: '4,4' }
             : { color: '#38bdf8', weight: 1, opacity: 0.6 }));
         });
-        L.marker([m.lat, m.lon], { icon: planeIcon(m.on_ground, m.heading, m.friendly_name, m.last_seen_epoch, m.route) })
+        L.marker([m.lat, m.lon], { icon: planeIcon(m.on_ground, m.heading, m.friendly_name, m.last_seen_epoch, m.route, m.tracked_by) })
           .addTo(markerLayer)
           .bindPopup(`<strong>${m.friendly_name}</strong><br>${m.callsign || '(no callsign)'}<br>${m.on_ground ? 'on ground' : 'airborne'}`);
       });
@@ -250,44 +278,51 @@
       ));
     }
 
+    function buildAircraftRowHtml(a) {
+      const infoLine = [a.manufacturer, a.aircraft_type].filter(Boolean).join(' · ');
+      const nameCell = `<td>
+          <strong>${escapeHtml(a.friendly_name)}</strong><br>
+          <span style="color:#888; font-size:0.85rem;">${escapeHtml(infoLine)}</span>
+        </td>
+        <td class="num">${escapeHtml(a.icao24)}</td>
+        <td class="num">${escapeHtml(a.registration) || '—'}</td>`;
+
+      if (!a.status) {
+        return `<tr>${nameCell}<td colspan="6">No data available</td></tr>`;
+      }
+
+      const s = a.status;
+      const badgeClass = 'status-badge' + (s.status === 'on ground' ? ' ground' : '');
+      const durationLine = a.status_duration_label
+        ? `<div class="status-duration-line">${escapeHtml(a.status_duration_label)} <span class="status-duration" data-epoch="${a.status_duration_epoch}">--:--:--</span></div>`
+        : '';
+      const position = s.latitude != null
+        ? `${s.latitude.toFixed(4)}, ${s.longitude.toFixed(4)}`
+        : '—';
+      const altitude = s.altitude != null ? s.altitude : '—';
+      const speed = s.ground_speed != null ? (s.ground_speed * 3.6).toFixed(1) : '—';
+
+      return `<tr>${nameCell}
+        <td class="num">${escapeHtml(s.callsign) || '—'}</td>
+        <td>
+          <span class="${badgeClass}">${escapeHtml(s.status)}</span>
+          ${durationLine}
+        </td>
+        <td class="num">${position}</td>
+        <td class="num">${altitude}</td>
+        <td class="num">${speed}</td>
+        <td class="num live-since" data-epoch="${s.last_seen_epoch}">--:--:--</td>
+      </tr>`;
+    }
+
     function renderTable(aircraft) {
-      const tbody = document.getElementById('aircraft-tbody');
-      tbody.innerHTML = aircraft.map(a => {
-        const infoLine = [a.manufacturer, a.aircraft_type].filter(Boolean).join(' · ');
-        const nameCell = `<td>
-            <strong>${escapeHtml(a.friendly_name)}</strong><br>
-            <span style="color:#888; font-size:0.85rem;">${escapeHtml(infoLine)}</span>
-          </td>
-          <td class="num">${escapeHtml(a.icao24)}</td>
-          <td class="num">${escapeHtml(a.registration) || '—'}</td>`;
+      const icao24Tracked = aircraft.filter(a => a.tracked_by === 'icao24');
+      const callsignTracked = aircraft.filter(a => a.tracked_by === 'callsign');
 
-        if (!a.status) {
-          return `<tr>${nameCell}<td colspan="6">No data available</td></tr>`;
-        }
-
-        const s = a.status;
-        const badgeClass = 'status-badge' + (s.status === 'on ground' ? ' ground' : '');
-        const durationLine = a.status_duration_label
-          ? `<div class="status-duration-line">${escapeHtml(a.status_duration_label)} <span class="status-duration" data-epoch="${a.status_duration_epoch}">--:--:--</span></div>`
-          : '';
-        const position = s.latitude != null
-          ? `${s.latitude.toFixed(4)}, ${s.longitude.toFixed(4)}`
-          : '—';
-        const altitude = s.altitude != null ? s.altitude : '—';
-        const speed = s.ground_speed != null ? (s.ground_speed * 3.6).toFixed(1) : '—';
-
-        return `<tr>${nameCell}
-          <td class="num">${escapeHtml(s.callsign) || '—'}</td>
-          <td>
-            <span class="${badgeClass}">${escapeHtml(s.status)}</span>
-            ${durationLine}
-          </td>
-          <td class="num">${position}</td>
-          <td class="num">${altitude}</td>
-          <td class="num">${speed}</td>
-          <td class="num live-since" data-epoch="${s.last_seen_epoch}">--:--:--</td>
-        </tr>`;
-      }).join('');
+      document.getElementById('aircraft-tbody').innerHTML = icao24Tracked.map(buildAircraftRowHtml).join('');
+      document.getElementById('callsign-tbody').innerHTML = callsignTracked.map(buildAircraftRowHtml).join('');
+      document.getElementById('aircraft-count').textContent = icao24Tracked.length;
+      document.getElementById('callsign-count').textContent = callsignTracked.length;
     }
 
     renderMarkers(initialMarkers);

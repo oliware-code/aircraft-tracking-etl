@@ -162,6 +162,8 @@ def _build_named_data():
     conn = get_connection()
     try:
         aircraft = get_named_aircraft_status(conn=conn)
+        for a in aircraft:
+            a["tracked_by"] = "icao24"
 
         named_icao24s = {a["icao24"] for a in aircraft}
         watched_callsigns = load_callsign_watchlist()
@@ -171,6 +173,7 @@ def _build_named_data():
                 # shown via the icao24 watchlist, to avoid a duplicate marker.
                 if entry["icao24"] and entry["icao24"] in named_icao24s:
                     continue
+                entry["tracked_by"] = "callsign"
                 aircraft.append(entry)
 
         markers = []
@@ -202,6 +205,7 @@ def _build_named_data():
                         "lon": float(a["status"]["longitude"]),
                         "friendly_name": a["friendly_name"],
                         "callsign": a["status"]["callsign"],
+                        "tracked_by": a["tracked_by"],
                         "on_ground": a["status"]["status"] == "on ground",
                         "last_seen_epoch": a["status"]["last_seen_epoch"],
                         "route": route_label,
@@ -235,6 +239,7 @@ def _serialize_named_aircraft(aircraft):
                 "registration": a["registration"],
                 "aircraft_type": a["aircraft_type"],
                 "manufacturer": a["manufacturer"],
+                "tracked_by": a["tracked_by"],
                 "status_duration_label": a["status_duration_label"],
                 "status_duration_epoch": a["status_duration_epoch"],
                 "status": None

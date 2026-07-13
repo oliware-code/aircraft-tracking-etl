@@ -1,7 +1,11 @@
-function planeIcon(onGround, heading, label, epoch, route) {
+function planeIcon(onGround, heading, label, epoch, route, trackedBy) {
   // Colors tuned for contrast on a dark basemap (CartoDB dark_all).
-  const color = onGround ? '#f8fafc' : '#38bdf8';
-  const stroke = onGround ? '#0f172a' : '#0c4a6e';
+  // Callsign-tracked aircraft get orange instead of blue while airborne, so the two
+  // watchlists are visually distinguishable on the map at a glance.
+  const airborneColor = trackedBy === 'callsign' ? '#fb923c' : '#38bdf8';
+  const airborneStroke = trackedBy === 'callsign' ? '#7c2d12' : '#0c4a6e';
+  const color = onGround ? '#f8fafc' : airborneColor;
+  const stroke = onGround ? '#0f172a' : airborneStroke;
   const rotation = heading || 0;
   const textShadow = 'text-shadow:0 0 3px #000,0 0 3px #000,0 0 4px #000,0 0 4px #000;';
   const labelHtml = label
