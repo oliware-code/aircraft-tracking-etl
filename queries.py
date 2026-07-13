@@ -316,6 +316,38 @@ def get_route_for_callsign(callsign, conn=None):
     }
 
 
+def get_all_airports(conn=None):
+    """Return every airport currently stored with known coordinates, for map display."""
+    owns_conn = conn is None
+    conn = conn or get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT iata, icao, name, municipality, country, latitude, longitude
+                FROM airports
+                WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
+                """
+            )
+            rows = cur.fetchall()
+    finally:
+        if owns_conn:
+            conn.close()
+
+    return [
+        {
+            "iata": iata,
+            "icao": icao,
+            "name": name,
+            "municipality": municipality,
+            "country": country,
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+        }
+        for iata, icao, name, municipality, country, latitude, longitude in rows
+    ]
+
+
 def get_latest_snapshot():
     """Return every aircraft detected in the single most recent states timestamp.
 

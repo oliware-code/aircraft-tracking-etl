@@ -9,6 +9,7 @@ from flask import Flask, Response, jsonify, render_template, request
 
 from db_connection import get_connection
 from queries import (
+    get_all_airports,
     get_callsigns_by_icao24,
     get_current_flight_trail,
     get_icao24_by_callsign,
@@ -242,7 +243,8 @@ def _serialize_named_aircraft(aircraft):
 @app.route("/named")
 def named():
     aircraft, markers = _build_named_data()
-    return render_template("named.html", aircraft=aircraft, markers=markers)
+    airports = get_all_airports()
+    return render_template("named.html", aircraft=aircraft, markers=markers, airports=airports)
 
 
 @app.route("/named/data")

@@ -153,14 +153,23 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/static/plane-icon.js"></script>
+  <script src="/static/airport-icon.js"></script>
   <script src="/static/live-timer.js"></script>
   <script>
     const initialMarkers = {{ markers | tojson }};
+    const airports = {{ airports | tojson }};
     const map = L.map('map');
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
       maxZoom: 20,
       attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
     }).addTo(map);
+
+    const airportLayer = L.layerGroup().addTo(map);
+    airports.forEach((a) => {
+      L.marker([a.latitude, a.longitude], { icon: airportIcon(a.iata) })
+        .addTo(airportLayer)
+        .bindPopup(`<strong>${a.name || a.iata}</strong><br>${[a.municipality, a.country].filter(Boolean).join(', ')}`);
+    });
 
     const markerLayer = L.layerGroup().addTo(map);
     let trailLayers = [];
