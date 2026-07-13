@@ -1,0 +1,55 @@
+import logging
+from pathlib import Path
+
+import yaml
+
+from db_connection import get_connection
+from notify import send_notification
+from queries import get_last_known_status
+
+WATCHLIST_PATH = Path(__file__).with_name("notify_watchlist.yaml")
+
+
+def load_watchlist(path=WATCHLIST_PATH):
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    return {icao24.strip().lower() for icao24 in data.get("watched_aircraft", [])}
+
+
+def check_status_changes(states, watchlist=None):
+    """Notify for each watched icao24 in this snapshot whose on_ground flag flipped
+    since its previously stored state. Must be called before the snapshot is inserted,
+    since it compares against the last row already committed to `states`.
+    """
+    watchlist = load_watchlist() if watchlist is None else watchlist
+    if not watchlist or not states.get("states"):
+        return
+
+    snapshot_by_icao24 = {s[0]: s for s in states["states"] if s[0] in watchlist}
+    if not snapshot_by_icao24:
+        return
+
+    conn = get_connection()
+    try:
+        for icao24, state in snapshot_by_icao24.items():
+            previous = get_last_known_status(icao24, conn=conn)
+            new_on_ground = state[8]
+            callsign = (state[1] or "").strip() or icao24
+
+            if previous is None:
+                logging.info(f"Watchlist: first sighting of {icao24} ({callsign}), currently {'on the ground' if new_on_ground else 'airborne'}.")
+                continue
+
+            previous_on_ground = previous["status"] == "on ground"
+            if previous_on_ground == new_on_ground:
+                continue
+
+            message = (
+                f"🛬 {callsign} ({icao24}) has landed."
+                if new_on_ground
+                else f"🛫 {callsign} ({icao24}) is now airborne."
+            )
+            logging.info(f"Watchlist status change: {message}")
+            send_notification(message)
+    finally:
+        conn.close()

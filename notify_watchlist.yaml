@@ -1,0 +1,3 @@
+# icao24 addresses to notify about when they go airborne or land.
+watched_aircraft:
+  - 0d0ff6

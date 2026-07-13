@@ -8,6 +8,7 @@ import requests
 
 from credentials import CLIENT_ID, CLIENT_SECRET
 from db_connection import get_connection
+from status_watch import check_status_changes
 
 # --- CONFIG ---
 TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
@@ -159,6 +160,10 @@ if __name__ == "__main__":
     states = client.get_all_states()
     if states and states["states"]:
         logging.info(f"Snapshot timestamp: {epoch_to_utc(states['time'])}")
+        try:
+            check_status_changes(states)
+        except Exception as e:
+            logging.error(f"❌ Watchlist notification error: {e}")
         db_connection = get_connection()
         try:
             ingest_snapshot(states, db_connection)

@@ -1,6 +1,7 @@
 database.ini
 credentials.py
 opensky_token.json
+notify_bot.py
 venv/
 __pycache__/
 *.pyc
