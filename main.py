@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 
@@ -14,6 +14,12 @@ TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protoc
 API_URL = "https://opensky-network.org/api/states/all"
 CACHE_FILE = "opensky_token.json"
 LOG_DIR = "logs"
+
+def epoch_to_utc(epoch):
+    if epoch is None:
+        return None
+    return datetime.fromtimestamp(epoch, tz=timezone.utc)
+
 
 INSERT_AIRCRAFT = """ INSERT INTO aircraft(icao24, origin_country) VALUES (%s, %s) ON CONFLICT DO NOTHING; """
 INSERT_CALLSIGN = """ INSERT INTO flight_routes(callsign) VALUES(%s) ON CONFLICT DO NOTHING """
@@ -109,11 +115,11 @@ def ingest_snapshot(states, db_connection):
         icao24 = state[0]
         callsign = (state[1] or "").strip() or None
         state_values = (
-            states["time"],  # timestamp (unique for all states)
+            epoch_to_utc(states["time"]),  # timestamp (unique for all states)
             icao24,
             callsign,
-            state[3],  # time_position
-            state[4],  # last_contact
+            epoch_to_utc(state[3]),  # time_position
+            epoch_to_utc(state[4]),  # last_contact
             state[5],  # longitude
             state[6],  # latitude
             state[7],  # barometric_altitude
@@ -152,7 +158,7 @@ if __name__ == "__main__":
     client = CachedOpenSkyClient(CLIENT_ID, CLIENT_SECRET)
     states = client.get_all_states()
     if states and states["states"]:
-        logging.info(f"Snapshot timestamp: {states['time']}")
+        logging.info(f"Snapshot timestamp: {epoch_to_utc(states['time'])}")
         db_connection = get_connection()
         try:
             ingest_snapshot(states, db_connection)

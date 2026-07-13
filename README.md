@@ -105,9 +105,12 @@ names), `/latest` (map of the most recent full snapshot).
 - **Idempotent dimension inserts.** New aircraft and callsigns are inserted with
   `ON CONFLICT DO NOTHING`, so re-running a cycle never duplicates dimensions, and
   `rowcount` cheaply reports what was genuinely new.
-- **Timestamps as Unix epoch `bigint`.** The API delivers epoch seconds; storing them
-  raw makes the composite primary key compact and lets history queries bucket by
-  integer division (`timestamp / 300`) to thin trails for plotting.
+- **Timestamps converted to UTC before storage.** The API delivers Unix epoch seconds;
+  `main.py` converts all three timestamp fields (`timestamp`, `time_position`,
+  `last_contact`) to UTC-aware `datetime` objects via
+  `datetime.fromtimestamp(epoch, tz=timezone.utc)` before inserting, so the database
+  stores them as native `TIMESTAMPTZ`. History queries bucket by integer division using
+  `EXTRACT(EPOCH FROM timestamp)::bigint / 300` to thin trails for plotting.
 - **Read/write split.** The write path (`main.py`) and read path (`queries.py`) share
   only the connection factory, so the web app can evolve without touching ingestion.
 

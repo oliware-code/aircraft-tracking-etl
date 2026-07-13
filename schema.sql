@@ -24,11 +24,11 @@ CREATE TABLE flight_routes (
 );
 
 CREATE TABLE states (
-    timestamp bigint NOT NULL,
+    timestamp timestamptz NOT NULL,
     icao24 text NOT NULL,
     callsign text,
-    time_position bigint,
-    last_contact bigint,
+    time_position timestamptz,
+    last_contact timestamptz,
     longitude numeric,
     latitude numeric,
     barometric_altitude numeric,

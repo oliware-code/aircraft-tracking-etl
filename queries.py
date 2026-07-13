@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import timedelta
 
 from db_connection import get_connection
 
@@ -75,7 +75,7 @@ def get_last_known_status(icao24, conn=None):
             return {
                 "icao24": icao24,
                 "callsign": callsign.strip() if callsign else None,
-                "last_seen": datetime.fromtimestamp(timestamp, tz=timezone.utc),
+                "last_seen": timestamp,
                 "status": "on ground" if on_ground else "airborne",
                 "longitude": longitude,
                 "latitude": latitude,
@@ -99,22 +99,22 @@ def get_position_history(icao24, days=7, bucket_seconds=300):
     if last_status is None:
         return []
 
-    end_ts = int(last_status["last_seen"].timestamp())
-    start_ts = end_ts - days * 86400
+    end_ts = last_status["last_seen"]
+    start_ts = end_ts - timedelta(days=days)
 
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT DISTINCT ON (timestamp / %s)
+                SELECT DISTINCT ON (EXTRACT(EPOCH FROM timestamp)::bigint / %s)
                        timestamp, callsign, longitude, latitude, geo_altitude, on_ground
                 FROM states
                 WHERE TRIM(LOWER(icao24)) = TRIM(LOWER(%s))
                   AND timestamp BETWEEN %s AND %s
                   AND longitude IS NOT NULL
                   AND latitude IS NOT NULL
-                ORDER BY timestamp / %s, timestamp;
+                ORDER BY EXTRACT(EPOCH FROM timestamp)::bigint / %s, timestamp;
                 """,
                 (bucket_seconds, icao24, start_ts, end_ts, bucket_seconds),
             )
@@ -125,7 +125,7 @@ def get_position_history(icao24, days=7, bucket_seconds=300):
     rows.sort(key=lambda r: r[0])
     return [
         {
-            "timestamp": datetime.fromtimestamp(ts, tz=timezone.utc),
+            "timestamp": ts,
             "callsign": callsign.strip() if callsign else None,
             "longitude": longitude,
             "latitude": latitude,
@@ -156,8 +156,8 @@ def get_current_flight_trail(icao24, conn=None, status=None, since=None):
         if since is None or since["on_ground"]:
             return []
 
-        start_ts = int(since["since"].timestamp())
-        end_ts = int(status["last_seen"].timestamp())
+        start_ts = since["since"]
+        end_ts = status["last_seen"]
 
         with conn.cursor() as cur:
             cur.execute(
@@ -179,7 +179,7 @@ def get_current_flight_trail(icao24, conn=None, status=None, since=None):
 
     return [
         {
-            "timestamp": datetime.fromtimestamp(ts, tz=timezone.utc),
+            "timestamp": ts,
             "callsign": callsign.strip() if callsign else None,
             "longitude": longitude,
             "latitude": latitude,
@@ -222,7 +222,7 @@ def get_status_since(icao24, conn=None):
     since_ts, on_ground = row
     return {
         "on_ground": on_ground,
-        "since": datetime.fromtimestamp(since_ts, tz=timezone.utc),
+        "since": since_ts,
     }
 
 
@@ -340,7 +340,7 @@ def get_latest_snapshot():
             geo_altitude, on_ground, ground_speed, true_track,
         ) in rows
     ]
-    return datetime.fromtimestamp(max_ts, tz=timezone.utc), aircraft
+    return max_ts, aircraft
 
 
 if __name__ == "__main__":
