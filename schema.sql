@@ -46,6 +46,16 @@ CREATE TABLE states (
 CREATE INDEX idx_states_callsign_norm ON public.states USING btree (TRIM(BOTH FROM upper(callsign)));
 CREATE INDEX idx_states_icao24_norm_ts ON public.states USING btree (TRIM(BOTH FROM lower(icao24)), "timestamp");
 
+CREATE TABLE airlines (
+    icao text NOT NULL,
+    iata text,
+    name text,
+    radio_callsign text,
+    country text,
+    country_iso text,
+    CONSTRAINT airlines_pkey PRIMARY KEY (icao)
+);
+
 -- Foreign keys
 ALTER TABLE states
     ADD CONSTRAINT aircraft_fk FOREIGN KEY (icao24) REFERENCES aircraft(icao24);
