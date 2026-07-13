@@ -250,7 +250,8 @@ def named():
 @app.route("/named/data")
 def named_data():
     aircraft, markers = _build_named_data()
-    return jsonify(aircraft=_serialize_named_aircraft(aircraft), markers=markers)
+    airports = get_all_airports()
+    return jsonify(aircraft=_serialize_named_aircraft(aircraft), markers=markers, airports=airports)
 
 
 @app.route("/events")

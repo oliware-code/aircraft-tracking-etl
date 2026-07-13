@@ -92,7 +92,7 @@
         <input type="checkbox" id="airport-toggle" checked>
         <span class="slider"></span>
       </label>
-      <span>Show airports ({{ airports | length }})</span>
+      <span>Show airports (<span id="airport-count">{{ airports | length }}</span>)</span>
       <label class="switch">
         <input type="checkbox" id="trail-toggle">
         <span class="slider"></span>
@@ -170,11 +170,16 @@
     }).addTo(map);
 
     const airportLayer = L.layerGroup();
-    airports.forEach((a) => {
-      L.marker([a.latitude, a.longitude], { icon: airportIcon(a.iata) })
-        .addTo(airportLayer)
-        .bindPopup(`<strong>${a.name || a.iata}</strong><br>${[a.municipality, a.country].filter(Boolean).join(', ')}`);
-    });
+
+    function renderAirports(airportList) {
+      airportLayer.clearLayers();
+      airportList.forEach((a) => {
+        L.marker([a.latitude, a.longitude], { icon: airportIcon(a.iata) })
+          .addTo(airportLayer)
+          .bindPopup(`<strong>${a.name || a.iata}</strong><br>${[a.municipality, a.country].filter(Boolean).join(', ')}`);
+      });
+      document.getElementById('airport-count').textContent = airportList.length;
+    }
 
     const airportToggle = document.getElementById('airport-toggle');
     function applyAirportVisibility() {
@@ -185,6 +190,7 @@
       }
     }
     airportToggle.addEventListener('change', applyAirportVisibility);
+    renderAirports(airports);
     applyAirportVisibility();
 
     const markerLayer = L.layerGroup().addTo(map);
@@ -293,6 +299,7 @@
         .then((data) => {
           renderMarkers(data.markers);
           renderTable(data.aircraft);
+          renderAirports(data.airports);
         })
         .catch((err) => console.error('Failed to refresh named aircraft data:', err));
     }
