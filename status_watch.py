@@ -5,7 +5,7 @@ import yaml
 
 from db_connection import get_connection
 from notify import send_notification
-from queries import get_last_known_status
+from queries import get_friendly_name, get_last_known_status
 
 WATCHLIST_PATH = Path(__file__).with_name("notify_watchlist.yaml")
 
@@ -44,10 +44,12 @@ def check_status_changes(states, watchlist=None):
             if previous_on_ground == new_on_ground:
                 continue
 
+            friendly_name = get_friendly_name(icao24, conn=conn)
+            label = f"{friendly_name} ({callsign} / {icao24})" if friendly_name else f"{callsign} ({icao24})"
             message = (
-                f"🛬 {callsign} ({icao24}) has landed."
+                f"🛬 {label} has landed."
                 if new_on_ground
-                else f"🛫 {callsign} ({icao24}) is now airborne."
+                else f"🛫 {label} is now airborne."
             )
             logging.info(f"Watchlist status change: {message}")
             send_notification(message)

@@ -226,6 +226,27 @@ def get_status_since(icao24, conn=None):
     }
 
 
+def get_friendly_name(icao24, conn=None):
+    """Return the aircraft's friendly_name (or None if unset/unknown)."""
+    owns_conn = conn is None
+    conn = conn or get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT friendly_name
+                FROM aircraft
+                WHERE TRIM(LOWER(icao24)) = TRIM(LOWER(%s));
+                """,
+                (icao24,),
+            )
+            row = cur.fetchone()
+    finally:
+        if owns_conn:
+            conn.close()
+    return row[0] if row else None
+
+
 def get_named_aircraft_status(conn=None):
     """Return current status for every aircraft in `aircraft` with a non-null friendly_name."""
     owns_conn = conn is None
