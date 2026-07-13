@@ -271,7 +271,13 @@
         })
         .catch((err) => console.error('Failed to refresh named aircraft data:', err));
     }
-    setInterval(refreshData, 120000);
+    // Refresh the moment a cron ingest cycle commits, instead of guessing an interval.
+    const snapshotEvents = new EventSource('/events');
+    snapshotEvents.onmessage = refreshData;
+
+    // Safety net in case the SSE connection is stuck (EventSource retries on its own,
+    // but this guarantees data is never more than 5 minutes stale either way).
+    setInterval(refreshData, 300000);
   </script>
 </body>
 </html>

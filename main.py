@@ -147,6 +147,10 @@ def ingest_snapshot(states, db_connection):
         db_cursor.execute(INSERT_STATE, state_values)
         if db_cursor.rowcount > 0:
             states_counter += 1
+    # app.py's background thread LISTENs on this channel and pushes a live-refresh
+    # event to connected browsers; committed in the same transaction as the insert
+    # so listeners never fire ahead of the data actually being visible.
+    db_cursor.execute("NOTIFY new_snapshot;")
     db_connection.commit()
     db_cursor.close()
     logging.info(f"New aircraft: {aircraft_counter}")

@@ -1,6 +1,11 @@
+import logging
 import os
+import queue
+import select
+import threading
+import time
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 from db_connection import get_connection
 from queries import (
@@ -18,6 +23,38 @@ from queries import (
 app = Flask(__name__)
 
 HISTORY_DAYS = 7
+_snapshot_subscribers = set()
+_snapshot_subscribers_lock = threading.Lock()
+
+
+def _broadcast_new_snapshot():
+    with _snapshot_subscribers_lock:
+        subscribers = list(_snapshot_subscribers)
+    for client_queue in subscribers:
+        client_queue.put_nowait("refresh")
+
+
+def _listen_for_snapshots():
+    """Background thread: LISTENs on the channel main.py NOTIFYs after each
+    committed ingest, and wakes every connected /events client when it fires.
+    Runs for the lifetime of the process; reconnects on connection loss.
+    """
+    while True:
+        try:
+            conn = get_connection()
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute("LISTEN new_snapshot;")
+            while True:
+                if not select.select([conn], [], [], 60)[0]:
+                    continue
+                conn.poll()
+                while conn.notifies:
+                    conn.notifies.pop()
+                    _broadcast_new_snapshot()
+        except Exception:
+            logging.exception("Snapshot listener lost its connection; reconnecting in 5s")
+            time.sleep(5)
 GAP_SECONDS = 600  # trail segments spanning >10 minutes between detections are drawn differently
 
 
@@ -214,6 +251,29 @@ def named_data():
     return jsonify(aircraft=_serialize_named_aircraft(aircraft), markers=markers)
 
 
+@app.route("/events")
+def events():
+    """Server-Sent Events stream: emits "refresh" the moment a cron-triggered
+    ingest cycle commits, so pages can re-fetch instead of polling on a timer.
+    """
+    def stream():
+        client_queue = queue.Queue()
+        with _snapshot_subscribers_lock:
+            _snapshot_subscribers.add(client_queue)
+        try:
+            while True:
+                try:
+                    client_queue.get(timeout=25)
+                    yield "data: refresh\n\n"
+                except queue.Empty:
+                    yield ": keep-alive\n\n"
+        finally:
+            with _snapshot_subscribers_lock:
+                _snapshot_subscribers.discard(client_queue)
+
+    return Response(stream(), mimetype="text/event-stream")
+
+
 @app.route("/latest")
 def latest():
     fetched_at, aircraft = get_latest_snapshot()
@@ -245,5 +305,8 @@ def latest():
 
 
 if __name__ == "__main__":
+    threading.Thread(target=_listen_for_snapshots, daemon=True).start()
     # Enable the debugger explicitly with FLASK_DEBUG=1; never leave it on by default.
-    app.run(host="0.0.0.0", debug=os.environ.get("FLASK_DEBUG") == "1")
+    # threaded=True: /events holds a connection open per client, which would
+    # otherwise block every other request behind it on the dev server.
+    app.run(host="0.0.0.0", debug=os.environ.get("FLASK_DEBUG") == "1", threaded=True)
