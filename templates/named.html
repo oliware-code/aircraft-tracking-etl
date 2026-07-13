@@ -89,6 +89,11 @@
     <a class="back" href="/">&larr; Back to lookup</a>
     <div class="map-controls">
       <label class="switch">
+        <input type="checkbox" id="airport-toggle" checked>
+        <span class="slider"></span>
+      </label>
+      <span>Show airports ({{ airports | length }})</span>
+      <label class="switch">
         <input type="checkbox" id="trail-toggle">
         <span class="slider"></span>
       </label>
@@ -164,12 +169,23 @@
       attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
     }).addTo(map);
 
-    const airportLayer = L.layerGroup().addTo(map);
+    const airportLayer = L.layerGroup();
     airports.forEach((a) => {
       L.marker([a.latitude, a.longitude], { icon: airportIcon(a.iata) })
         .addTo(airportLayer)
         .bindPopup(`<strong>${a.name || a.iata}</strong><br>${[a.municipality, a.country].filter(Boolean).join(', ')}`);
     });
+
+    const airportToggle = document.getElementById('airport-toggle');
+    function applyAirportVisibility() {
+      if (airportToggle.checked) {
+        airportLayer.addTo(map);
+      } else {
+        map.removeLayer(airportLayer);
+      }
+    }
+    airportToggle.addEventListener('change', applyAirportVisibility);
+    applyAirportVisibility();
 
     const markerLayer = L.layerGroup().addTo(map);
     let trailLayers = [];
