@@ -20,6 +20,7 @@ CREATE TABLE flight_routes (
     iata_destination text,
     icao_origin text,
     icao_destination text,
+    enrichment_checked_at timestamptz,
     CONSTRAINT flight_routes_pkey PRIMARY KEY (callsign)
 );
 

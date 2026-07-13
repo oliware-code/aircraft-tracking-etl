@@ -8,6 +8,7 @@ import requests
 
 from credentials import CLIENT_ID, CLIENT_SECRET
 from db_connection import get_connection
+from route_enrichment import resolve_route
 from status_watch import check_status_changes
 
 # --- CONFIG ---
@@ -144,6 +145,12 @@ def ingest_snapshot(states, db_connection):
             if db_cursor.rowcount > 0:
                 callsign_counter += 1
                 logging.info(f"Route inserted: {callsign}")
+                # Only a genuinely new callsign triggers an adsbdb lookup, so a normal
+                # cycle (mostly already-known callsigns) makes zero extra API calls.
+                try:
+                    resolve_route(callsign, db_connection)
+                except Exception as e:
+                    logging.error(f"❌ Route enrichment error for {callsign}: {e}")
         db_cursor.execute(INSERT_STATE, state_values)
         if db_cursor.rowcount > 0:
             states_counter += 1
