@@ -90,6 +90,56 @@ def get_last_known_status(icao24, conn=None):
             conn.close()
 
 
+def get_last_known_status_by_callsign(callsign, conn=None):
+    """Return the most recent state row recorded under this callsign, or None if never seen.
+
+    Unlike get_last_known_status, this follows a flight number rather than a specific
+    aircraft — the icao24 in the result is whichever aircraft was flying it at the time.
+    """
+    owns_conn = conn is None
+    conn = conn or get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT timestamp, icao24, longitude, latitude, barometric_altitude,
+                       geo_altitude, on_ground, ground_speed, vertical_rate, true_track,
+                       squawk
+                FROM states
+                WHERE TRIM(UPPER(callsign)) = TRIM(UPPER(%s))
+                ORDER BY timestamp DESC
+                LIMIT 1;
+                """,
+                (callsign,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+
+            (
+                timestamp, icao24, longitude, latitude, barometric_altitude,
+                geo_altitude, on_ground, ground_speed, vertical_rate, true_track,
+                squawk,
+            ) = row
+
+            return {
+                "icao24": icao24,
+                "callsign": callsign,
+                "last_seen": timestamp,
+                "status": "on ground" if on_ground else "airborne",
+                "longitude": longitude,
+                "latitude": latitude,
+                "altitude": geo_altitude if geo_altitude is not None else barometric_altitude,
+                "ground_speed": ground_speed,
+                "vertical_rate": vertical_rate,
+                "true_track": true_track,
+                "squawk": squawk,
+            }
+    finally:
+        if owns_conn:
+            conn.close()
+
+
 def get_position_history(icao24, days=7, bucket_seconds=300):
     """Return a sampled position trail for icao24 covering `days` before its last known timestamp.
 
@@ -247,6 +297,38 @@ def get_friendly_name(icao24, conn=None):
     return row[0] if row else None
 
 
+def get_aircraft_info(icao24, conn=None):
+    """Return {friendly_name, registration, aircraft_type, manufacturer} for icao24,
+    or None if this icao24 has never been recorded in `aircraft`."""
+    owns_conn = conn is None
+    conn = conn or get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT friendly_name, registration, aircraft_type, manufacturer
+                FROM aircraft
+                WHERE TRIM(LOWER(icao24)) = TRIM(LOWER(%s));
+                """,
+                (icao24,),
+            )
+            row = cur.fetchone()
+    finally:
+        if owns_conn:
+            conn.close()
+
+    if row is None:
+        return None
+
+    friendly_name, registration, aircraft_type, manufacturer = row
+    return {
+        "friendly_name": friendly_name,
+        "registration": registration,
+        "aircraft_type": aircraft_type,
+        "manufacturer": manufacturer,
+    }
+
+
 def get_named_aircraft_status(conn=None):
     """Return current status for every aircraft in `aircraft` with a non-null friendly_name."""
     owns_conn = conn is None
@@ -273,6 +355,35 @@ def get_named_aircraft_status(conn=None):
                     "registration": registration,
                     "aircraft_type": aircraft_type,
                     "manufacturer": manufacturer,
+                    "status": status,
+                }
+            )
+    finally:
+        if owns_conn:
+            conn.close()
+    return results
+
+
+def get_watched_callsign_status(callsigns, conn=None):
+    """Return current status for each watched callsign (see
+    status_watch.load_callsign_watchlist), resolved to whichever aircraft is
+    currently flying it. friendly_name falls back to the callsign itself when the
+    resolved aircraft has none (or hasn't been sighted at all yet)."""
+    owns_conn = conn is None
+    conn = conn or get_connection()
+    try:
+        results = []
+        for callsign in callsigns:
+            status = get_last_known_status_by_callsign(callsign, conn=conn)
+            icao24 = status["icao24"] if status else None
+            info = get_aircraft_info(icao24, conn=conn) if icao24 else None
+            results.append(
+                {
+                    "icao24": icao24,
+                    "friendly_name": (info["friendly_name"] if info else None) or callsign,
+                    "registration": info["registration"] if info else None,
+                    "aircraft_type": info["aircraft_type"] if info else None,
+                    "manufacturer": info["manufacturer"] if info else None,
                     "status": status,
                 }
             )

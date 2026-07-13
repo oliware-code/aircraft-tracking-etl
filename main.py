@@ -9,7 +9,7 @@ import requests
 from credentials import CLIENT_ID, CLIENT_SECRET
 from db_connection import get_connection
 from route_enrichment import resolve_route
-from status_watch import check_status_changes
+from status_watch import check_callsign_status_changes, check_status_changes
 
 # --- CONFIG ---
 TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
@@ -175,6 +175,10 @@ if __name__ == "__main__":
             check_status_changes(states)
         except Exception as e:
             logging.error(f"❌ Watchlist notification error: {e}")
+        try:
+            check_callsign_status_changes(states)
+        except Exception as e:
+            logging.error(f"❌ Callsign watchlist notification error: {e}")
         db_connection = get_connection()
         try:
             ingest_snapshot(states, db_connection)

@@ -1,3 +1,8 @@
 # icao24 addresses to notify about when they go airborne or land.
 watched_aircraft:
   - abc123  # replace with the icao24(s) you want to watch
+
+# Callsigns to notify about when they go airborne or land, tracking whichever
+# aircraft is currently flying that flight number (rather than a specific icao24).
+watched_callsigns:
+  - ABC123  # replace with the callsign(s) you want to watch

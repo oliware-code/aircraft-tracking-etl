@@ -19,7 +19,9 @@ from queries import (
     get_position_history,
     get_route_for_callsign,
     get_status_since,
+    get_watched_callsign_status,
 )
+from status_watch import load_callsign_watchlist
 
 app = Flask(__name__)
 
@@ -160,6 +162,17 @@ def _build_named_data():
     conn = get_connection()
     try:
         aircraft = get_named_aircraft_status(conn=conn)
+
+        named_icao24s = {a["icao24"] for a in aircraft}
+        watched_callsigns = load_callsign_watchlist()
+        if watched_callsigns:
+            for entry in get_watched_callsign_status(watched_callsigns, conn=conn):
+                # Skip if this callsign is currently flown by an aircraft already
+                # shown via the icao24 watchlist, to avoid a duplicate marker.
+                if entry["icao24"] and entry["icao24"] in named_icao24s:
+                    continue
+                aircraft.append(entry)
+
         markers = []
         for a in aircraft:
             a["status"] = _with_epoch(a["status"])
