@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import requests
 
+from approach_alerts import check_approach_alerts
 from credentials import CLIENT_ID, CLIENT_SECRET
 from db_connection import get_connection
 from route_enrichment import resolve_aircraft, resolve_route
@@ -185,6 +186,10 @@ if __name__ == "__main__":
             check_callsign_status_changes(states)
         except Exception as e:
             logging.error(f"❌ Callsign watchlist notification error: {e}")
+        try:
+            check_approach_alerts(states)
+        except Exception as e:
+            logging.error(f"❌ Approach alert error: {e}")
         db_connection = get_connection()
         try:
             ingest_snapshot(states, db_connection)

@@ -575,6 +575,40 @@ def get_all_airports(conn=None):
     ]
 
 
+def get_airport_by_iata(iata, conn=None):
+    """Return {name, icao, municipality, country, latitude, longitude} for a single
+    airport, or None if unknown/not yet enriched."""
+    owns_conn = conn is None
+    conn = conn or get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT name, icao, municipality, country, latitude, longitude
+                FROM airports
+                WHERE TRIM(UPPER(iata)) = TRIM(UPPER(%s));
+                """,
+                (iata,),
+            )
+            row = cur.fetchone()
+    finally:
+        if owns_conn:
+            conn.close()
+
+    if row is None:
+        return None
+
+    name, icao, municipality, country, latitude, longitude = row
+    return {
+        "name": name,
+        "icao": icao,
+        "municipality": municipality,
+        "country": country,
+        "latitude": float(latitude) if latitude is not None else None,
+        "longitude": float(longitude) if longitude is not None else None,
+    }
+
+
 def get_latest_snapshot():
     """Return every aircraft detected in the single most recent states timestamp.
 

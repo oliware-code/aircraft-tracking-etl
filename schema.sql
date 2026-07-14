@@ -71,6 +71,13 @@ CREATE TABLE airports (
     CONSTRAINT airports_pkey PRIMARY KEY (iata)
 );
 
+CREATE TABLE approach_alerts_sent (
+    icao24 text NOT NULL,
+    flight_started_at timestamptz NOT NULL,
+    notified_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT approach_alerts_sent_pkey PRIMARY KEY (icao24)
+);
+
 -- Foreign keys
 ALTER TABLE states
     ADD CONSTRAINT aircraft_fk FOREIGN KEY (icao24) REFERENCES aircraft(icao24);
