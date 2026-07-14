@@ -657,6 +657,30 @@ def get_latest_snapshot():
     return max_ts, aircraft
 
 
+def get_last_ingest_summary(conn=None):
+    """Return {fetched_at, states_count} for the most recently ingested snapshot,
+    or None if `states` is empty. states_count is every row sharing that exact
+    timestamp (unfiltered by position), matching what main.py logs as
+    "States inserted" for that cycle.
+    """
+    owns_conn = conn is None
+    conn = conn or get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT MAX(timestamp) FROM states;")
+            max_ts = cur.fetchone()[0]
+            if max_ts is None:
+                return None
+
+            cur.execute("SELECT count(*) FROM states WHERE timestamp = %s;", (max_ts,))
+            states_count = cur.fetchone()[0]
+    finally:
+        if owns_conn:
+            conn.close()
+
+    return {"fetched_at": max_ts, "states_count": states_count}
+
+
 if __name__ == "__main__":
     import sys
 

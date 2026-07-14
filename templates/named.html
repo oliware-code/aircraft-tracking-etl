@@ -28,6 +28,15 @@
     color: #166534;
   }
   .status-badge.ground { background: #fef3c7; color: #92400e; }
+  .ingest-badge {
+    display: inline-block;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    background: #dbeafe;
+    color: #1e40af;
+  }
   .status-duration-line {
     color: #888;
     font-size: 0.78rem;
@@ -101,6 +110,7 @@
     table.aircraft th { color: #999; }
     .status-badge { background: #14532d; color: #bbf7d0; }
     .status-badge.ground { background: #78350f; color: #fde68a; }
+    .ingest-badge { background: #1e3a8a; color: #bfdbfe; }
   }
 </style>
 </head>
@@ -118,6 +128,14 @@
         <span class="slider"></span>
       </label>
       <span>Show flight trails</span>
+      <span id="last-ingest-info">
+        {% if last_ingest %}
+          <span class="ingest-badge">
+            <span id="last-ingest-count">{{ last_ingest.states_count }}</span> states ·
+            <span class="status-duration" data-epoch="{{ last_ingest.fetched_at.timestamp() | int }}">--:--:--</span> ago
+          </span>
+        {% endif %}
+      </span>
     </div>
   </div>
 
@@ -531,6 +549,18 @@
     renderMarkers(initialMarkers);
     fitMapToMarkers(initialMarkers);
 
+    function renderLastIngest(lastIngest) {
+      const el = document.getElementById('last-ingest-info');
+      if (!lastIngest) {
+        el.innerHTML = '';
+        return;
+      }
+      el.innerHTML = `<span class="ingest-badge">
+        <span id="last-ingest-count">${lastIngest.states_count}</span> states ·
+        <span class="status-duration" data-epoch="${lastIngest.fetched_at_epoch}">--:--:--</span> ago
+      </span>`;
+    }
+
     function refreshData() {
       fetch('/named/data')
         .then((r) => r.json())
@@ -539,6 +569,7 @@
           renderTable(data.aircraft);
           renderCallsignFlights(data.callsign_flights);
           renderAirports(data.airports);
+          renderLastIngest(data.last_ingest);
         })
         .catch((err) => console.error('Failed to refresh named aircraft data:', err));
     }

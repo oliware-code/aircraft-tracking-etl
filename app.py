@@ -14,6 +14,7 @@ from queries import (
     get_current_flight_trail,
     get_icao24_by_callsign,
     get_last_known_status,
+    get_last_ingest_summary,
     get_latest_snapshot,
     get_named_aircraft_status,
     get_position_history,
@@ -302,12 +303,14 @@ def _serialize_callsign_flights(callsign_flights):
 def named():
     aircraft, markers, callsign_flights = _build_named_data()
     airports = get_all_airports()
+    last_ingest = get_last_ingest_summary()
     return render_template(
         "named.html",
         aircraft=aircraft,
         markers=markers,
         airports=airports,
         callsign_flights=callsign_flights,
+        last_ingest=last_ingest,
     )
 
 
@@ -315,11 +318,18 @@ def named():
 def named_data():
     aircraft, markers, callsign_flights = _build_named_data()
     airports = get_all_airports()
+    last_ingest = get_last_ingest_summary()
     return jsonify(
         aircraft=_serialize_named_aircraft(aircraft),
         markers=markers,
         airports=airports,
         callsign_flights=_serialize_callsign_flights(callsign_flights),
+        last_ingest=None
+        if last_ingest is None
+        else {
+            "states_count": last_ingest["states_count"],
+            "fetched_at_epoch": int(last_ingest["fetched_at"].timestamp()),
+        },
     )
 
 
