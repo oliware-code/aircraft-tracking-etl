@@ -282,6 +282,8 @@
 
     const markerLayer = L.layerGroup().addTo(map);
     let trailLayers = [];
+    let interpolated = [];
+    const INTERPOLATION_MAX_SECONDS = 400; // slightly past the 5-minute refresh fallback
 
     const trailToggle = document.getElementById('trail-toggle');
     function applyTrailVisibility() {
@@ -295,10 +297,44 @@
     }
     trailToggle.addEventListener('change', applyTrailVisibility);
 
+    // Great-circle destination point given a start, bearing (degrees), and distance (km).
+    function destinationPoint(lat, lon, headingDeg, distanceKm) {
+      const R = 6371;
+      const bearing = headingDeg * Math.PI / 180;
+      const lat1 = lat * Math.PI / 180;
+      const lon1 = lon * Math.PI / 180;
+      const dR = distanceKm / R;
+
+      const lat2 = Math.asin(
+        Math.sin(lat1) * Math.cos(dR) + Math.cos(lat1) * Math.sin(dR) * Math.cos(bearing)
+      );
+      const lon2 = lon1 + Math.atan2(
+        Math.sin(bearing) * Math.sin(dR) * Math.cos(lat1),
+        Math.cos(dR) - Math.sin(lat1) * Math.sin(lat2)
+      );
+      return [lat2 * 180 / Math.PI, lon2 * 180 / Math.PI];
+    }
+
+    // Nudges airborne markers along their last known heading/speed between real
+    // refreshes, purely cosmetic -- always re-based on the latest real fix, never
+    // compounding on a previous prediction, and capped so a stalled refresh
+    // freezes the marker instead of sliding it indefinitely off course.
+    function tickInterpolation() {
+      const now = Date.now() / 1000;
+      interpolated.forEach((im) => {
+        const elapsed = Math.min(now - im.epoch, INTERPOLATION_MAX_SECONDS);
+        if (elapsed <= 0) return;
+        const distanceKm = (im.speedMs * elapsed) / 1000;
+        im.marker.setLatLng(destinationPoint(im.lat, im.lon, im.heading, distanceKm));
+      });
+    }
+    setInterval(tickInterpolation, 1000);
+
     function renderMarkers(markers) {
       markerLayer.clearLayers();
       trailLayers.forEach((layer) => map.removeLayer(layer));
       trailLayers = [];
+      interpolated = [];
 
       markers.forEach(m => {
         (m.trail_segments || []).forEach(seg => {
@@ -308,9 +344,20 @@
             ? { color: '#f97316', weight: 1, opacity: 0.7, dashArray: '4,4' }
             : { color: '#38bdf8', weight: 1, opacity: 0.6 }));
         });
-        L.marker([m.lat, m.lon], { icon: planeIcon(m.on_ground, m.heading, m.friendly_name, m.last_seen_epoch, m.route, m.tracked_by) })
+        const marker = L.marker([m.lat, m.lon], { icon: planeIcon(m.on_ground, m.heading, m.friendly_name, m.last_seen_epoch, m.route, m.tracked_by) })
           .addTo(markerLayer)
           .bindPopup(`<strong>${m.friendly_name}</strong><br>${m.callsign || '(no callsign)'}<br>${m.on_ground ? 'on ground' : 'airborne'}`);
+
+        if (!m.on_ground && m.ground_speed != null && m.heading != null) {
+          interpolated.push({
+            marker,
+            lat: m.lat,
+            lon: m.lon,
+            heading: m.heading,
+            speedMs: m.ground_speed,
+            epoch: m.last_seen_epoch,
+          });
+        }
       });
 
       applyTrailVisibility();

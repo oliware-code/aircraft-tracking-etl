@@ -215,6 +215,11 @@ def _build_named_data():
                         "tracked_by": a["tracked_by"],
                         "on_ground": a["status"]["status"] == "on ground",
                         "last_seen_epoch": a["status"]["last_seen_epoch"],
+                        "ground_speed": (
+                            float(a["status"]["ground_speed"])
+                            if a["status"]["ground_speed"] is not None
+                            else None
+                        ),
                         "route": route_label,
                         "heading": (
                             0
