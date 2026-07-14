@@ -22,7 +22,7 @@ from queries import (
     get_watched_callsign_flights,
     get_watched_callsign_status,
 )
-from status_watch import load_callsign_watchlist
+from status_watch import load_callsign_watchlist, load_watchlist
 
 app = Flask(__name__)
 
@@ -165,6 +165,12 @@ def _build_named_data():
         aircraft = get_named_aircraft_status(conn=conn)
         for a in aircraft:
             a["tracked_by"] = "icao24"
+
+        # Display order follows notify_watchlist.yaml's list order rather than the
+        # alphabetical-by-friendly_name order the query returns; anything with a
+        # friendly_name but not in the YAML falls back to the end, in its existing order.
+        icao24_order = {icao24: i for i, icao24 in enumerate(load_watchlist())}
+        aircraft.sort(key=lambda a: icao24_order.get(a["icao24"], len(icao24_order)))
 
         named_icao24s = {a["icao24"] for a in aircraft}
         watched_callsigns = load_callsign_watchlist()

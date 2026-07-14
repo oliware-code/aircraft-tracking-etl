@@ -393,7 +393,7 @@ def get_watched_callsign_status(callsigns, conn=None):
     return results
 
 
-def get_recent_flights_by_callsign(callsign, limit=5, conn=None):
+def get_recent_flights_by_callsign(callsign, limit=4, conn=None):
     """Return up to `limit` most recent flight instances for this callsign, newest
     first. A "flight" is one contiguous airborne segment (states between an
     on_ground->airborne transition and the next airborne->on_ground one), so a
@@ -465,7 +465,7 @@ def get_recent_flights_by_callsign(callsign, limit=5, conn=None):
     ]
 
 
-def get_watched_callsign_flights(callsigns, limit=5, conn=None):
+def get_watched_callsign_flights(callsigns, limit=4, conn=None):
     """Return up to `limit` recent flight instances per watched callsign (see
     get_recent_flights_by_callsign), each enriched with aircraft info and route,
     ready for table display. Newest flight first within each callsign's group."""

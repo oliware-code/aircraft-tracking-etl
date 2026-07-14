@@ -17,15 +17,19 @@ WATCHLIST_PATH = Path(__file__).with_name("notify_watchlist.yaml")
 
 
 def load_watchlist(path=WATCHLIST_PATH):
+    """Return the watched icao24s in the same order they're listed in the YAML file
+    (deduplicated, first occurrence wins)."""
     with open(path) as f:
         data = yaml.safe_load(f) or {}
-    return {icao24.strip().lower() for icao24 in data.get("watched_aircraft", [])}
+    return list(dict.fromkeys(icao24.strip().lower() for icao24 in data.get("watched_aircraft", [])))
 
 
 def load_callsign_watchlist(path=WATCHLIST_PATH):
+    """Return the watched callsigns in the same order they're listed in the YAML
+    file (deduplicated, first occurrence wins)."""
     with open(path) as f:
         data = yaml.safe_load(f) or {}
-    return {callsign.strip().upper() for callsign in data.get("watched_callsigns", [])}
+    return list(dict.fromkeys(callsign.strip().upper() for callsign in data.get("watched_callsigns", [])))
 
 
 def _send_status_change_notification(icao24, callsign, new_on_ground, conn):
