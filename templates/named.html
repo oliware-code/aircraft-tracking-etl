@@ -315,6 +315,34 @@
       return [lat2 * 180 / Math.PI, lon2 * 180 / Math.PI];
     }
 
+    // Catmull-Rom spline through [lat, lon] points, for rendering a smooth curve
+    // instead of straight segments between sparse real position samples.
+    function catmullRomSpline(points, segmentsPerSpan = 8) {
+      if (points.length < 3) return points;
+      const at = (i) => points[Math.max(0, Math.min(points.length - 1, i))];
+      const result = [];
+
+      for (let i = 0; i < points.length - 1; i++) {
+        const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+        const isLastSpan = i === points.length - 2;
+        const steps = isLastSpan ? segmentsPerSpan + 1 : segmentsPerSpan;
+
+        for (let s = 0; s < steps; s++) {
+          const t = s / segmentsPerSpan;
+          const t2 = t * t;
+          const t3 = t2 * t;
+          const coord = (a, b, c, d) => 0.5 * (
+            (2 * b) +
+            (-a + c) * t +
+            (2 * a - 5 * b + 4 * c - d) * t2 +
+            (-a + 3 * b - 3 * c + d) * t3
+          );
+          result.push([coord(p0[0], p1[0], p2[0], p3[0]), coord(p0[1], p1[1], p2[1], p3[1])]);
+        }
+      }
+      return result;
+    }
+
     // Nudges airborne markers along their last known heading/speed between real
     // refreshes, purely cosmetic -- always re-based on the latest real fix, never
     // compounding on a previous prediction, and capped so a stalled refresh
@@ -339,7 +367,13 @@
       markers.forEach(m => {
         (m.trail_segments || []).forEach(seg => {
           if (seg.points.length < 2) return;
-          const segPoints = seg.points.map(p => [p.lat, p.lon]);
+          let segPoints = seg.points.map(p => [p.lat, p.lon]);
+          // Only smooth real (non-gap) segments -- a gap segment is already just a
+          // straight line standing in for a stretch we never tracked, and smoothing
+          // it would visually imply more precision than we actually have there.
+          if (!seg.gap && segPoints.length >= 3) {
+            segPoints = catmullRomSpline(segPoints);
+          }
           trailLayers.push(L.polyline(segPoints, seg.gap
             ? { color: '#f97316', weight: 1, opacity: 0.7, dashArray: '4,4' }
             : { color: '#38bdf8', weight: 1, opacity: 0.6 }));
