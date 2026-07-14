@@ -67,6 +67,18 @@
     font-weight: 600;
     padding: 0.3rem 0;
   }
+  .callsign-group {
+    margin: 0.5rem 0 0.5rem 1rem;
+  }
+  .callsign-group summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+    padding: 0.2rem 0;
+  }
+  .callsign-group table.aircraft {
+    margin-top: 0.3rem;
+  }
   table.aircraft {
     border-collapse: collapse;
     width: 100%;
@@ -193,6 +205,11 @@
         <td class="num">{{ f.route or "—" }}</td>
         <td>
           <span class="status-badge {{ '' if f.in_progress else 'ground' }}">{{ "In progress" if f.in_progress else "Landed" }}</span>
+          {% if f.in_progress %}
+            <div class="status-duration-line">
+              for <span class="status-duration" data-epoch="{{ f.departed_epoch }}">--:--:--</span>
+            </div>
+          {% endif %}
         </td>
         <td class="num live-since" data-epoch="{{ f.departed_epoch }}">--:--:--</td>
         <td class="num live-since" data-epoch="{{ f.last_seen_epoch }}">--:--:--</td>
@@ -201,6 +218,7 @@
   {% endmacro %}
 
   {% set icao24_tracked = aircraft | selectattr('tracked_by', 'equalto', 'icao24') | list %}
+  {% set callsign_groups = callsign_flights | groupby('callsign') %}
 
   <details class="tracked-section" open>
     <summary>Tracked aircraft (<span id="aircraft-count">{{ icao24_tracked | length }}</span>)</summary>
@@ -211,11 +229,18 @@
   </details>
 
   <details class="tracked-section" open>
-    <summary>Tracked callsigns (<span id="callsign-count">{{ callsign_flights | length }}</span>)</summary>
-    <table class="aircraft">
-      {{ callsign_table_head() }}
-      <tbody id="callsign-tbody">{{ callsign_flight_rows(callsign_flights) }}</tbody>
-    </table>
+    <summary>Tracked callsigns (<span id="callsign-count">{{ callsign_groups | length }}</span>)</summary>
+    <div id="callsign-groups">
+      {% for callsign, flights in callsign_groups %}
+        <details class="callsign-group" data-callsign="{{ callsign }}" open>
+          <summary>{{ callsign }} ({{ flights | length }})</summary>
+          <table class="aircraft">
+            {{ callsign_table_head() }}
+            <tbody>{{ callsign_flight_rows(flights) }}</tbody>
+          </table>
+        </details>
+      {% endfor %}
+    </div>
   </details>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -355,10 +380,25 @@
       document.getElementById('aircraft-count').textContent = icao24Tracked.length;
     }
 
+    const CALLSIGN_TABLE_HEAD_HTML = `<thead>
+      <tr>
+        <th>Callsign</th>
+        <th>icao24</th>
+        <th>Registration</th>
+        <th>Route</th>
+        <th>Status</th>
+        <th>Departed</th>
+        <th>Last seen</th>
+      </tr>
+    </thead>`;
+
     function buildCallsignFlightRowHtml(f) {
       const infoLine = [f.friendly_name, f.manufacturer, f.aircraft_type].filter(Boolean).join(' · ');
       const badgeClass = 'status-badge' + (f.in_progress ? '' : ' ground');
       const statusText = f.in_progress ? 'In progress' : 'Landed';
+      const durationLine = f.in_progress
+        ? `<div class="status-duration-line">for <span class="status-duration" data-epoch="${f.departed_epoch}">--:--:--</span></div>`
+        : '';
 
       return `<tr>
         <td>
@@ -368,15 +408,43 @@
         <td class="num">${escapeHtml(f.icao24) || '—'}</td>
         <td class="num">${escapeHtml(f.registration) || '—'}</td>
         <td class="num">${escapeHtml(f.route) || '—'}</td>
-        <td><span class="${badgeClass}">${statusText}</span></td>
+        <td>
+          <span class="${badgeClass}">${statusText}</span>
+          ${durationLine}
+        </td>
         <td class="num live-since" data-epoch="${f.departed_epoch}">--:--:--</td>
         <td class="num live-since" data-epoch="${f.last_seen_epoch}">--:--:--</td>
       </tr>`;
     }
 
     function renderCallsignFlights(callsignFlights) {
-      document.getElementById('callsign-tbody').innerHTML = callsignFlights.map(buildCallsignFlightRowHtml).join('');
-      document.getElementById('callsign-count').textContent = callsignFlights.length;
+      const container = document.getElementById('callsign-groups');
+
+      // Preserve each callsign group's open/closed state across refreshes, so
+      // collapsing one doesn't get undone by the next live update.
+      const openState = {};
+      container.querySelectorAll('details.callsign-group').forEach((el) => {
+        openState[el.dataset.callsign] = el.open;
+      });
+
+      const groups = new Map();
+      callsignFlights.forEach((f) => {
+        if (!groups.has(f.callsign)) groups.set(f.callsign, []);
+        groups.get(f.callsign).push(f);
+      });
+
+      container.innerHTML = Array.from(groups.entries()).map(([callsign, flights]) => {
+        const isOpen = callsign in openState ? openState[callsign] : true;
+        return `<details class="callsign-group" data-callsign="${escapeHtml(callsign)}" ${isOpen ? 'open' : ''}>
+          <summary>${escapeHtml(callsign)} (${flights.length})</summary>
+          <table class="aircraft">
+            ${CALLSIGN_TABLE_HEAD_HTML}
+            <tbody>${flights.map(buildCallsignFlightRowHtml).join('')}</tbody>
+          </table>
+        </details>`;
+      }).join('');
+
+      document.getElementById('callsign-count').textContent = groups.size;
     }
 
     renderMarkers(initialMarkers);
