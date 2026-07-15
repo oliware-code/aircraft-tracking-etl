@@ -19,6 +19,7 @@ from queries import (
     get_named_aircraft_status,
     get_position_history,
     get_route_for_callsign,
+    get_states_ingest_history,
     get_status_since,
     get_watched_callsign_flights,
     get_watched_callsign_status,
@@ -304,6 +305,17 @@ def named():
     aircraft, markers, callsign_flights = _build_named_data()
     airports = get_all_airports()
     last_ingest = get_last_ingest_summary()
+    # Deliberately not part of /named/data's live refresh: this is a coarse
+    # (hourly-bucketed) 72h history, cheap once per page load but not worth
+    # recomputing on every ~2-minute SSE-triggered refresh.
+    ingest_history = [
+        {
+            "bucket_epoch": int(h["bucket_start"].timestamp()),
+            "bucket_label": h["bucket_start"].strftime("%a %H:%M UTC"),
+            "states_count": h["states_count"],
+        }
+        for h in get_states_ingest_history(hours=72)
+    ]
     return render_template(
         "named.html",
         aircraft=aircraft,
@@ -311,6 +323,7 @@ def named():
         airports=airports,
         callsign_flights=callsign_flights,
         last_ingest=last_ingest,
+        ingest_history=ingest_history,
     )
 
 
