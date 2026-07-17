@@ -25,6 +25,17 @@ CREATE TABLE flight_routes (
     CONSTRAINT flight_routes_pkey PRIMARY KEY (callsign)
 );
 
+-- states is partitioned BY RANGE(timestamp), one partition per day
+-- (states_YYYY_MM_DD). partition_maintenance.py creates new partitions ahead
+-- of time and detaches partitions older than its --retention-days into the
+-- `archive` schema (DETACH PARTITION + SET SCHEMA archive) -- never DROP, so
+-- older data is always still queryable at archive.states_YYYY_MM_DD, just
+-- out of the live table's partition-pruning path.
+--
+-- Constraint/index names below carry the "states_daily_*" prefix as a
+-- cosmetic leftover from the migration that created this table (see
+-- DAILY_PARTITIONING_MIGRATION.txt) -- harmless, not renamed, out of scope
+-- for that migration.
 CREATE TABLE states (
     timestamp timestamptz NOT NULL,
     icao24 text NOT NULL,
@@ -43,10 +54,15 @@ CREATE TABLE states (
     squawk numeric,
     spi boolean,
     position_source smallint,
-    CONSTRAINT states_pk PRIMARY KEY ("timestamp", icao24)
-);
-CREATE INDEX idx_states_callsign_norm ON public.states USING btree (TRIM(BOTH FROM upper(callsign)));
-CREATE INDEX idx_states_icao24_norm_ts ON public.states USING btree (TRIM(BOTH FROM lower(icao24)), "timestamp");
+    CONSTRAINT states_daily_pk PRIMARY KEY ("timestamp", icao24)
+) PARTITION BY RANGE ("timestamp");
+CREATE INDEX idx_states_daily_callsign_norm ON public.states USING btree (TRIM(BOTH FROM upper(callsign)));
+CREATE INDEX idx_states_daily_icao24_norm_ts ON public.states USING btree (TRIM(BOTH FROM lower(icao24)), "timestamp");
+
+-- Daily partitions themselves (states_2026_07_03 ... states_2026_07_24 as of
+-- this writing) are created/archived dynamically by partition_maintenance.py
+-- and are not enumerated here -- see that script and
+-- DAILY_PARTITIONING_MIGRATION.txt for the current live set.
 
 CREATE TABLE airlines (
     icao text NOT NULL,
