@@ -485,6 +485,7 @@ LANDING_MAX_ALTITUDE_ABOVE_ELEVATION_M = 500
 CRUISE_ALTITUDE_THRESHOLD_M = 6000
 CRUISE_SPEED_THRESHOLD_KMH = 400
 FEET_TO_METERS = 0.3048
+MAX_PLAUSIBLE_DURATION_HOURS = 16
 
 
 def classify_flight_status(flight, route, conn=None):
@@ -493,10 +494,13 @@ def classify_flight_status(flight, route, conn=None):
       - "landed": the last detection is consistent with a real landing at the
         route's destination airport (close by, low altitude above the airport's
         elevation).
-      - "lost_signal": not the current segment, but the last detection still
-        looks like cruise (high altitude and/or high speed) -- this wasn't a
-        completed landing, ADS-B coverage was simply lost. See flight_definition.txt
-        (project root, untracked) for the reasoning behind this distinction.
+      - "lost_signal": not the current segment, but either the segment's total
+        duration is physically implausible (a mid-flight ingestion gap likely
+        swallowed an on-ground period and stitched two real flights into one),
+        or the last detection still looks like cruise (high altitude and/or
+        high speed) -- either way this wasn't a completed landing, ADS-B
+        coverage was simply lost. See flight_definition.txt (project root,
+        untracked) for the reasoning behind this distinction.
 
     Falls back to "landed" (the original, simpler behavior) whenever there isn't
     enough data to tell confidently: no route/destination known yet, the
@@ -508,6 +512,10 @@ def classify_flight_status(flight, route, conn=None):
     """
     if flight["in_progress"]:
         return "in_progress"
+
+    duration_hours = (flight["last_seen"] - flight["departed_at"]).total_seconds() / 3600
+    if duration_hours > MAX_PLAUSIBLE_DURATION_HOURS:
+        return "lost_signal"
 
     destination = (
         get_airport_by_iata(route["iata_destination"], conn=conn)
