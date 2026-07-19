@@ -1,10 +1,9 @@
 import html
 import logging
-import math
 
 from db_connection import get_connection
 from notify import send_notification
-from queries import get_airport_by_iata, get_friendly_name, get_route_for_callsign, get_status_since
+from queries import get_airport_by_iata, get_friendly_name, get_route_for_callsign, get_status_since, haversine_km
 from status_watch import load_callsign_watchlist, load_watchlist
 
 APPROACH_THRESHOLD_MINUTES = 10
@@ -18,16 +17,6 @@ UPSERT_ALERT = """
 GET_ALERTED_FLIGHT = """
     SELECT flight_started_at FROM approach_alerts_sent WHERE icao24 = %s
 """
-
-
-def _haversine_km(lat1, lon1, lat2, lon2):
-    """Great-circle distance between two points, in kilometers."""
-    r = 6371.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(a))
 
 
 def _already_alerted(icao24, flight_started_at, conn):
@@ -80,7 +69,7 @@ def check_approach_alerts(states, conn=None):
             if not destination or destination["latitude"] is None or destination["longitude"] is None:
                 continue
 
-            distance_km = _haversine_km(latitude, longitude, destination["latitude"], destination["longitude"])
+            distance_km = haversine_km(latitude, longitude, destination["latitude"], destination["longitude"])
             eta_minutes = (distance_km / (ground_speed * 3.6)) * 60
             if not (0 < eta_minutes <= APPROACH_THRESHOLD_MINUTES):
                 continue

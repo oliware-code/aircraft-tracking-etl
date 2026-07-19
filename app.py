@@ -290,7 +290,7 @@ def _serialize_callsign_flights(callsign_flights):
             "aircraft_type": f["aircraft_type"],
             "manufacturer": f["manufacturer"],
             "route": f["route"],
-            "in_progress": f["in_progress"],
+            "status": f["status"],
             "departed_epoch": f["departed_epoch"],
             "last_seen_epoch": f["last_seen_epoch"],
             "latitude": float(f["latitude"]) if f["latitude"] is not None else None,

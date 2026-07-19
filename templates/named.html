@@ -28,6 +28,7 @@
     color: #166534;
   }
   .status-badge.ground { background: #fef3c7; color: #92400e; }
+  .status-badge.lost-signal { background: #e2e8f0; color: #475569; }
   .ingest-badge {
     display: inline-block;
     padding: 0.15rem 0.6rem;
@@ -110,6 +111,7 @@
     table.aircraft th { color: #999; }
     .status-badge { background: #14532d; color: #bbf7d0; }
     .status-badge.ground { background: #78350f; color: #fde68a; }
+    .status-badge.lost-signal { background: #334155; color: #cbd5e1; }
     .ingest-badge { background: #1e3a8a; color: #bfdbfe; }
   }
 </style>
@@ -222,11 +224,15 @@
         <td class="num">{{ f.registration or "—" }}</td>
         <td class="num">{{ f.route or "—" }}</td>
         <td>
-          <span class="status-badge {{ '' if f.in_progress else 'ground' }}">{{ "In progress" if f.in_progress else "Landed" }}</span>
-          {% if f.in_progress %}
+          {% if f.status == "in_progress" %}
+            <span class="status-badge">In progress</span>
             <div class="status-duration-line">
               for <span class="status-duration" data-epoch="{{ f.departed_epoch }}">--:--:--</span>
             </div>
+          {% elif f.status == "lost_signal" %}
+            <span class="status-badge lost-signal">Lost signal</span>
+          {% else %}
+            <span class="status-badge ground">Landed</span>
           {% endif %}
         </td>
         <td class="num live-since" data-epoch="{{ f.departed_epoch }}">--:--:--</td>
@@ -513,11 +519,16 @@
       </tr>
     </thead>`;
 
+    const CALLSIGN_STATUS_BADGES = {
+      in_progress: { className: 'status-badge', label: 'In progress' },
+      lost_signal: { className: 'status-badge lost-signal', label: 'Lost signal' },
+      landed: { className: 'status-badge ground', label: 'Landed' },
+    };
+
     function buildCallsignFlightRowHtml(f) {
       const infoLine = [f.friendly_name, f.manufacturer, f.aircraft_type].filter(Boolean).join(' · ');
-      const badgeClass = 'status-badge' + (f.in_progress ? '' : ' ground');
-      const statusText = f.in_progress ? 'In progress' : 'Landed';
-      const durationLine = f.in_progress
+      const badge = CALLSIGN_STATUS_BADGES[f.status] || CALLSIGN_STATUS_BADGES.landed;
+      const durationLine = f.status === 'in_progress'
         ? `<div class="status-duration-line">for <span class="status-duration" data-epoch="${f.departed_epoch}">--:--:--</span></div>`
         : '';
 
@@ -530,7 +541,7 @@
         <td class="num">${escapeHtml(f.registration) || '—'}</td>
         <td class="num">${escapeHtml(f.route) || '—'}</td>
         <td>
-          <span class="${badgeClass}">${statusText}</span>
+          <span class="${badge.className}">${badge.label}</span>
           ${durationLine}
         </td>
         <td class="num live-since" data-epoch="${f.departed_epoch}">--:--:--</td>

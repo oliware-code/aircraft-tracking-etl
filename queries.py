@@ -1,6 +1,17 @@
+import math
 from datetime import datetime, timedelta, timezone
 
 from db_connection import get_connection
+
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    """Great-circle distance between two points, in kilometers."""
+    r = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
 
 
 def get_icao24_by_callsign(callsign):
@@ -410,6 +421,7 @@ def get_recent_flights_by_callsign(callsign, limit=4, conn=None):
                 WITH flagged AS (
                     SELECT
                         timestamp, icao24, on_ground, longitude, latitude,
+                        geo_altitude, ground_speed,
                         on_ground IS DISTINCT FROM LAG(on_ground) OVER (ORDER BY timestamp) AS changed
                     FROM states
                     WHERE TRIM(UPPER(callsign)) = TRIM(UPPER(%s))
@@ -417,6 +429,7 @@ def get_recent_flights_by_callsign(callsign, limit=4, conn=None):
                 segments AS (
                     SELECT
                         timestamp, icao24, on_ground, longitude, latitude,
+                        geo_altitude, ground_speed,
                         SUM(CASE WHEN changed THEN 1 ELSE 0 END) OVER (ORDER BY timestamp) AS segment_id
                     FROM flagged
                 ),
@@ -432,11 +445,11 @@ def get_recent_flights_by_callsign(callsign, limit=4, conn=None):
                 SELECT
                     a.departed_at, a.last_seen,
                     (a.segment_id = overall_max.max_segment_id) AS in_progress,
-                    s.icao24, s.longitude, s.latitude
+                    s.icao24, s.longitude, s.latitude, s.geo_altitude, s.ground_speed
                 FROM airborne_segments a
                 CROSS JOIN overall_max
                 JOIN LATERAL (
-                    SELECT icao24, longitude, latitude
+                    SELECT icao24, longitude, latitude, geo_altitude, ground_speed
                     FROM segments
                     WHERE segment_id = a.segment_id
                     ORDER BY timestamp DESC
@@ -460,9 +473,90 @@ def get_recent_flights_by_callsign(callsign, limit=4, conn=None):
             "icao24": icao24,
             "longitude": longitude,
             "latitude": latitude,
+            "geo_altitude": geo_altitude,
+            "ground_speed": ground_speed,
         }
-        for departed_at, last_seen, in_progress, icao24, longitude, latitude in rows
+        for departed_at, last_seen, in_progress, icao24, longitude, latitude, geo_altitude, ground_speed in rows
     ]
+
+
+LANDING_MAX_DISTANCE_KM = 15
+LANDING_MAX_ALTITUDE_ABOVE_ELEVATION_M = 500
+CRUISE_ALTITUDE_THRESHOLD_M = 6000
+CRUISE_SPEED_THRESHOLD_KMH = 400
+FEET_TO_METERS = 0.3048
+
+
+def classify_flight_status(flight, route, conn=None):
+    """Classify a flight instance (see get_recent_flights_by_callsign) as one of:
+      - "in_progress": still airborne, no later segment has happened yet.
+      - "landed": the last detection is consistent with a real landing at the
+        route's destination airport (close by, low altitude above the airport's
+        elevation).
+      - "lost_signal": not the current segment, but the last detection still
+        looks like cruise (high altitude and/or high speed) -- this wasn't a
+        completed landing, ADS-B coverage was simply lost. See flight_definition.txt
+        (project root, untracked) for the reasoning behind this distinction.
+
+    Falls back to "landed" (the original, simpler behavior) whenever there isn't
+    enough data to tell confidently: no route/destination known yet, the
+    destination airport hasn't been enriched with coordinates, or the last
+    detection is missing altitude/speed/position. Known limitation: checks
+    against the *current* route on file for this callsign, not necessarily the
+    route that was actually flown at the time of an older flight instance --
+    flight_routes has no per-instance history, only the latest known route.
+    """
+    if flight["in_progress"]:
+        return "in_progress"
+
+    destination = (
+        get_airport_by_iata(route["iata_destination"], conn=conn)
+        if route and route.get("iata_destination")
+        else None
+    )
+    if not destination or destination["latitude"] is None or destination["longitude"] is None:
+        return "landed"
+
+    geo_altitude = flight.get("geo_altitude")
+    ground_speed = flight.get("ground_speed")
+    if (
+        geo_altitude is None
+        or ground_speed is None
+        or flight["latitude"] is None
+        or flight["longitude"] is None
+    ):
+        return "landed"
+
+    distance_km = haversine_km(
+        float(flight["latitude"]), float(flight["longitude"]),
+        destination["latitude"], destination["longitude"],
+    )
+    elevation_m = (
+        destination["elevation"] * FEET_TO_METERS if destination["elevation"] is not None else 0
+    )
+    altitude_above_elevation_m = float(geo_altitude) - elevation_m
+    speed_kmh = float(ground_speed) * 3.6
+
+    # Checked in this order deliberately: an "obviously still cruising" reading
+    # (per flight_definition.txt's own examples -- 28,000ft or >400km/h) should
+    # override a distance-based "near the destination" match, not the other way
+    # around -- a fast, high pass near the destination's coordinates is still
+    # clearly not a landing, coincidental proximity notwithstanding.
+    if altitude_above_elevation_m > CRUISE_ALTITUDE_THRESHOLD_M or speed_kmh > CRUISE_SPEED_THRESHOLD_KMH:
+        return "lost_signal"
+
+    # Both a confident landing match and the remaining ambiguous middle (neither
+    # clearly cruising nor confidently at the destination) resolve to "landed" --
+    # kept as separate branches for clarity even though they return the same
+    # value, since a future refinement might want to treat the ambiguous case
+    # differently.
+    if (
+        distance_km <= LANDING_MAX_DISTANCE_KM
+        and altitude_above_elevation_m <= LANDING_MAX_ALTITUDE_ABOVE_ELEVATION_M
+    ):
+        return "landed"  # confident landing
+
+    return "landed"  # ambiguous middle, fallback
 
 
 def get_watched_callsign_flights(callsigns, limit=4, conn=None):
@@ -487,6 +581,7 @@ def get_watched_callsign_flights(callsigns, limit=4, conn=None):
             flights = get_recent_flights_by_callsign(callsign, limit=limit, conn=conn)
             for flight in flights:
                 info = get_aircraft_info(flight["icao24"], conn=conn) if flight["icao24"] else None
+                status = classify_flight_status(flight, route, conn=conn)
                 results.append(
                     {
                         "callsign": callsign,
@@ -498,7 +593,7 @@ def get_watched_callsign_flights(callsigns, limit=4, conn=None):
                         "route": route_label,
                         "departed_at": flight["departed_at"],
                         "last_seen": flight["last_seen"],
-                        "in_progress": flight["in_progress"],
+                        "status": status,
                         "longitude": flight["longitude"],
                         "latitude": flight["latitude"],
                     }
@@ -576,15 +671,16 @@ def get_all_airports(conn=None):
 
 
 def get_airport_by_iata(iata, conn=None):
-    """Return {name, icao, municipality, country, latitude, longitude} for a single
-    airport, or None if unknown/not yet enriched."""
+    """Return {name, icao, municipality, country, latitude, longitude, elevation}
+    for a single airport, or None if unknown/not yet enriched. elevation is in
+    feet (as adsbdb provides it), or None if not known."""
     owns_conn = conn is None
     conn = conn or get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT name, icao, municipality, country, latitude, longitude
+                SELECT name, icao, municipality, country, latitude, longitude, elevation
                 FROM airports
                 WHERE TRIM(UPPER(iata)) = TRIM(UPPER(%s));
                 """,
@@ -598,12 +694,13 @@ def get_airport_by_iata(iata, conn=None):
     if row is None:
         return None
 
-    name, icao, municipality, country, latitude, longitude = row
+    name, icao, municipality, country, latitude, longitude, elevation = row
     return {
         "name": name,
         "icao": icao,
         "municipality": municipality,
         "country": country,
+        "elevation": elevation,
         "latitude": float(latitude) if latitude is not None else None,
         "longitude": float(longitude) if longitude is not None else None,
     }
