@@ -10,7 +10,7 @@ from approach_alerts import check_approach_alerts
 from credentials import CLIENT_ID, CLIENT_SECRET
 from db_connection import get_connection
 from route_enrichment import resolve_aircraft, resolve_route
-from status_watch import check_callsign_status_changes, check_status_changes
+from status_watch import check_callsign_status_changes, check_stale_airborne_landings, check_status_changes
 
 # --- CONFIG ---
 TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
@@ -186,6 +186,13 @@ if __name__ == "__main__":
             check_callsign_status_changes(states)
         except Exception as e:
             logging.error(f"❌ Callsign watchlist notification error: {e}")
+        try:
+            # Independent of this snapshot's contents -- catches aircraft whose
+            # ADS-B went silent right at touchdown, which the two checks above
+            # structurally can't (they only react to rows in the current poll).
+            check_stale_airborne_landings()
+        except Exception as e:
+            logging.error(f"❌ Stale-airborne-landing notification error: {e}")
         try:
             check_approach_alerts(states)
         except Exception as e:

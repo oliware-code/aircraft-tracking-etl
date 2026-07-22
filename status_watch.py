@@ -1,4 +1,5 @@
 import html
+import json
 import logging
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from queries import (
 )
 
 WATCHLIST_PATH = Path(__file__).with_name("notify_watchlist.yaml")
+STALE_LANDING_STATE_PATH = Path(__file__).with_name("stale_landing_state.json")
 
 
 def load_watchlist(path=WATCHLIST_PATH):
@@ -123,3 +125,72 @@ def check_callsign_status_changes(states, watchlist=None):
             _send_status_change_notification(icao24, callsign, new_on_ground, conn)
     finally:
         conn.close()
+
+
+def _load_stale_landing_state():
+    if not STALE_LANDING_STATE_PATH.exists():
+        return {}
+    return json.loads(STALE_LANDING_STATE_PATH.read_text())
+
+
+def _save_stale_landing_state(state):
+    STALE_LANDING_STATE_PATH.write_text(json.dumps(state))
+
+
+def check_stale_airborne_landings(icao24_watchlist=None, callsign_watchlist=None):
+    """Notify for watched aircraft/callsigns that have effectively landed but
+    will never trigger check_status_changes / check_callsign_status_changes,
+    because their ADS-B feed went silent right at touchdown and never sent
+    another state row with on_ground=true. Those two functions only ever look
+    at whatever's in the *current* ingest snapshot, so an aircraft that stops
+    transmitting entirely is invisible to them forever after its last report.
+
+    This instead re-checks every watched icao24/callsign's last known reading
+    each cycle, independent of the current snapshot, and relies on
+    get_last_known_status's own stale/low-altitude inference (see
+    _resolve_live_status in queries.py) to recognize a landing that on_ground
+    itself never confirmed. Only fires for the *inferred* case
+    (on_ground_raw is still False) -- a genuinely fresh on_ground=true row is
+    already handled by the snapshot-driven checks above.
+
+    Dedups via a local JSON file keyed on last-seen timestamp, since a silent
+    aircraft's last row (and thus this exact reading) never changes -- without
+    that, the same inferred landing would renotify every single cron cycle.
+    """
+    icao24_watchlist = load_watchlist() if icao24_watchlist is None else icao24_watchlist
+    callsign_watchlist = load_callsign_watchlist() if callsign_watchlist is None else callsign_watchlist
+    if not icao24_watchlist and not callsign_watchlist:
+        return
+
+    state = _load_stale_landing_state()
+    changed = False
+    conn = get_connection()
+    try:
+        for icao24 in icao24_watchlist:
+            status = get_last_known_status(icao24, conn=conn)
+            if _should_notify_stale_landing(state, f"icao24:{icao24}", status):
+                _send_status_change_notification(icao24, status["callsign"], True, conn)
+                changed = True
+
+        for callsign in callsign_watchlist:
+            status = get_last_known_status_by_callsign(callsign, conn=conn)
+            if _should_notify_stale_landing(state, f"callsign:{callsign}", status):
+                _send_status_change_notification(status["icao24"], callsign, True, conn)
+                changed = True
+    finally:
+        conn.close()
+
+    if changed:
+        _save_stale_landing_state(state)
+
+
+def _should_notify_stale_landing(state, key, status):
+    if status is None or status["status"] != "on ground" or status["on_ground_raw"]:
+        return False  # not currently seen, still genuinely airborne, or a real (not inferred) landing
+
+    last_seen_iso = status["last_seen"].isoformat()
+    if state.get(key) == last_seen_iso:
+        return False  # already notified for this exact reading
+
+    state[key] = last_seen_iso
+    return True

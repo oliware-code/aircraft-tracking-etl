@@ -89,6 +89,40 @@
   .callsign-group table.aircraft {
     margin-top: 0.3rem;
   }
+  .row-toggle {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: #666;
+    padding: 0 0.3rem;
+    transition: transform 0.15s ease;
+  }
+  .row-toggle[aria-expanded="true"] {
+    transform: rotate(90deg);
+  }
+  .flight-history-row td {
+    padding: 0.3rem 0.6rem 0.8rem 2rem;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  table.flight-history-table {
+    margin-top: 0;
+    width: 100%;
+  }
+  .show-more-flights {
+    margin-top: 0.5rem;
+    background: none;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: #475569;
+    padding: 0.25rem 0.7rem;
+  }
+  .show-more-flights:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
   table.aircraft {
     border-collapse: collapse;
     width: 100%;
@@ -109,6 +143,9 @@
   @media (prefers-color-scheme: dark) {
     table.aircraft th, table.aircraft td { border-bottom-color: #333; }
     table.aircraft th { color: #999; }
+    .row-toggle { color: #999; }
+    .flight-history-row td { border-bottom-color: #333; }
+    .show-more-flights { border-color: #475569; color: #cbd5e1; }
     .status-badge { background: #14532d; color: #bbf7d0; }
     .status-badge.ground { background: #78350f; color: #fde68a; }
     .status-badge.lost-signal { background: #334155; color: #cbd5e1; }
@@ -146,6 +183,7 @@
   {% macro aircraft_table_head() %}
     <thead>
       <tr>
+        <th></th>
         <th>Aircraft</th>
         <th>icao24</th>
         <th>Registration</th>
@@ -159,9 +197,45 @@
     </thead>
   {% endmacro %}
 
+  {% macro aircraft_flight_table_head() %}
+    <thead>
+      <tr>
+        <th>Callsign</th>
+        <th>Route</th>
+        <th>Status</th>
+        <th>Departed</th>
+        <th>Last seen</th>
+      </tr>
+    </thead>
+  {% endmacro %}
+
+  {% macro aircraft_flight_rows(items) %}
+    {% for f in items %}
+      <tr>
+        <td class="num">{{ f.callsign or "—" }}</td>
+        <td class="num">{{ f.route or "—" }}</td>
+        <td>
+          {% if f.status == "in_progress" %}
+            <span class="status-badge">In progress</span>
+            <div class="status-duration-line">
+              for <span class="status-duration" data-epoch="{{ f.departed_epoch }}">--:--:--</span>
+            </div>
+          {% elif f.status == "lost_signal" %}
+            <span class="status-badge lost-signal">Lost signal</span>
+          {% else %}
+            <span class="status-badge ground">Landed</span>
+          {% endif %}
+        </td>
+        <td class="num live-since" data-epoch="{{ f.departed_epoch }}">--:--:--</td>
+        <td class="num live-since" data-epoch="{{ f.last_seen_epoch }}">--:--:--</td>
+      </tr>
+    {% endfor %}
+  {% endmacro %}
+
   {% macro aircraft_rows(items) %}
     {% for a in items %}
-      <tr>
+      <tr class="aircraft-row" data-icao24="{{ a.icao24 }}">
+        <td class="expand-toggle"><button type="button" class="row-toggle" aria-expanded="false">▸</button></td>
         <td>
           <strong>{{ a.friendly_name }}</strong><br>
           <span style="color:#888; font-size:0.85rem;">
@@ -193,6 +267,17 @@
         {% else %}
           <td colspan="6">No data available</td>
         {% endif %}
+      </tr>
+      <tr class="flight-history-row" data-icao24="{{ a.icao24 }}" hidden>
+        <td colspan="9">
+          <table class="aircraft flight-history-table">
+            {{ aircraft_flight_table_head() }}
+            <tbody>{{ aircraft_flight_rows(a.recent_flights) }}</tbody>
+          </table>
+          {% if a.recent_flights | length == 4 %}
+            <button type="button" class="show-more-flights" data-icao24="{{ a.icao24 }}" data-offset="4">Show more</button>
+          {% endif %}
+        </td>
       </tr>
     {% endfor %}
   {% endmacro %}
@@ -464,8 +549,36 @@
       ));
     }
 
+    const AIRCRAFT_FLIGHT_TABLE_HEAD_HTML = `<thead>
+      <tr>
+        <th>Callsign</th>
+        <th>Route</th>
+        <th>Status</th>
+        <th>Departed</th>
+        <th>Last seen</th>
+      </tr>
+    </thead>`;
+
+    function buildAircraftFlightRowHtml(f) {
+      const badge = CALLSIGN_STATUS_BADGES[f.status] || CALLSIGN_STATUS_BADGES.landed;
+      const durationLine = f.status === 'in_progress'
+        ? `<div class="status-duration-line">for <span class="status-duration" data-epoch="${f.departed_epoch}">--:--:--</span></div>`
+        : '';
+      return `<tr>
+        <td class="num">${escapeHtml(f.callsign) || '—'}</td>
+        <td class="num">${escapeHtml(f.route) || '—'}</td>
+        <td>
+          <span class="${badge.className}">${badge.label}</span>
+          ${durationLine}
+        </td>
+        <td class="num live-since" data-epoch="${f.departed_epoch}">--:--:--</td>
+        <td class="num live-since" data-epoch="${f.last_seen_epoch}">--:--:--</td>
+      </tr>`;
+    }
+
     function buildAircraftRowHtml(a) {
       const infoLine = [a.manufacturer, a.aircraft_type].filter(Boolean).join(' · ');
+      const toggleCell = `<td class="expand-toggle"><button type="button" class="row-toggle" aria-expanded="false">▸</button></td>`;
       const nameCell = `<td>
           <strong>${escapeHtml(a.friendly_name)}</strong><br>
           <span style="color:#888; font-size:0.85rem;">${escapeHtml(infoLine)}</span>
@@ -473,39 +586,107 @@
         <td class="num">${escapeHtml(a.icao24)}</td>
         <td class="num">${escapeHtml(a.registration) || '—'}</td>`;
 
+      let mainRow;
       if (!a.status) {
-        return `<tr>${nameCell}<td colspan="6">No data available</td></tr>`;
+        mainRow = `<tr class="aircraft-row" data-icao24="${escapeHtml(a.icao24)}">${toggleCell}${nameCell}<td colspan="6">No data available</td></tr>`;
+      } else {
+        const s = a.status;
+        const badgeClass = 'status-badge' + (s.status === 'on ground' ? ' ground' : '');
+        const durationLine = a.status_duration_label
+          ? `<div class="status-duration-line">${escapeHtml(a.status_duration_label)} <span class="status-duration" data-epoch="${a.status_duration_epoch}">--:--:--</span></div>`
+          : '';
+        const position = s.latitude != null
+          ? `${s.latitude.toFixed(4)}, ${s.longitude.toFixed(4)}`
+          : '—';
+        const altitude = s.altitude != null ? s.altitude : '—';
+        const speed = s.ground_speed != null ? (s.ground_speed * 3.6).toFixed(1) : '—';
+
+        mainRow = `<tr class="aircraft-row" data-icao24="${escapeHtml(a.icao24)}">${toggleCell}${nameCell}
+          <td class="num">${escapeHtml(s.callsign) || '—'}</td>
+          <td>
+            <span class="${badgeClass}">${escapeHtml(s.status)}</span>
+            ${durationLine}
+          </td>
+          <td class="num">${position}</td>
+          <td class="num">${altitude}</td>
+          <td class="num">${speed}</td>
+          <td class="num live-since" data-epoch="${s.last_seen_epoch}">--:--:--</td>
+        </tr>`;
       }
 
-      const s = a.status;
-      const badgeClass = 'status-badge' + (s.status === 'on ground' ? ' ground' : '');
-      const durationLine = a.status_duration_label
-        ? `<div class="status-duration-line">${escapeHtml(a.status_duration_label)} <span class="status-duration" data-epoch="${a.status_duration_epoch}">--:--:--</span></div>`
+      const flights = a.recent_flights || [];
+      const showMoreButton = flights.length === 4
+        ? `<button type="button" class="show-more-flights" data-icao24="${escapeHtml(a.icao24)}" data-offset="4">Show more</button>`
         : '';
-      const position = s.latitude != null
-        ? `${s.latitude.toFixed(4)}, ${s.longitude.toFixed(4)}`
-        : '—';
-      const altitude = s.altitude != null ? s.altitude : '—';
-      const speed = s.ground_speed != null ? (s.ground_speed * 3.6).toFixed(1) : '—';
-
-      return `<tr>${nameCell}
-        <td class="num">${escapeHtml(s.callsign) || '—'}</td>
-        <td>
-          <span class="${badgeClass}">${escapeHtml(s.status)}</span>
-          ${durationLine}
+      const historyRow = `<tr class="flight-history-row" data-icao24="${escapeHtml(a.icao24)}" hidden>
+        <td colspan="9">
+          <table class="aircraft flight-history-table">
+            ${AIRCRAFT_FLIGHT_TABLE_HEAD_HTML}
+            <tbody>${flights.map(buildAircraftFlightRowHtml).join('')}</tbody>
+          </table>
+          ${showMoreButton}
         </td>
-        <td class="num">${position}</td>
-        <td class="num">${altitude}</td>
-        <td class="num">${speed}</td>
-        <td class="num live-since" data-epoch="${s.last_seen_epoch}">--:--:--</td>
       </tr>`;
+
+      return mainRow + historyRow;
     }
 
     function renderTable(aircraft) {
+      const tbody = document.getElementById('aircraft-tbody');
       const icao24Tracked = aircraft.filter(a => a.tracked_by === 'icao24');
-      document.getElementById('aircraft-tbody').innerHTML = icao24Tracked.map(buildAircraftRowHtml).join('');
+
+      // Preserve each aircraft's expanded/collapsed state across refreshes.
+      const openState = {};
+      tbody.querySelectorAll('tr.flight-history-row').forEach((el) => {
+        openState[el.dataset.icao24] = !el.hidden;
+      });
+
+      tbody.innerHTML = icao24Tracked.map(buildAircraftRowHtml).join('');
       document.getElementById('aircraft-count').textContent = icao24Tracked.length;
+
+      tbody.querySelectorAll('tr.flight-history-row').forEach((el) => {
+        if (!openState[el.dataset.icao24]) return;
+        el.hidden = false;
+        const toggle = tbody.querySelector(`tr.aircraft-row[data-icao24="${CSS.escape(el.dataset.icao24)}"] .row-toggle`);
+        if (toggle) toggle.setAttribute('aria-expanded', 'true');
+      });
     }
+
+    document.getElementById('aircraft-tbody').addEventListener('click', (e) => {
+      const toggle = e.target.closest('.row-toggle');
+      if (toggle) {
+        const icao24 = toggle.closest('tr.aircraft-row').dataset.icao24;
+        const historyRow = document.querySelector(`tr.flight-history-row[data-icao24="${CSS.escape(icao24)}"]`);
+        if (!historyRow) return;
+        const expanded = toggle.getAttribute('aria-expanded') === 'true';
+        toggle.setAttribute('aria-expanded', String(!expanded));
+        historyRow.hidden = expanded;
+        return;
+      }
+
+      const showMoreBtn = e.target.closest('.show-more-flights');
+      if (showMoreBtn) {
+        const icao24 = showMoreBtn.dataset.icao24;
+        const offset = parseInt(showMoreBtn.dataset.offset, 10);
+        showMoreBtn.disabled = true;
+        showMoreBtn.textContent = 'Loading…';
+        fetch(`/aircraft/${encodeURIComponent(icao24)}/flights?offset=${offset}`)
+          .then((r) => r.json())
+          .then((flights) => {
+            const historyRow = document.querySelector(`tr.flight-history-row[data-icao24="${CSS.escape(icao24)}"]`);
+            if (!historyRow) return;
+            const tbody = historyRow.querySelector('tbody');
+            tbody.insertAdjacentHTML('beforeend', flights.map(buildAircraftFlightRowHtml).join(''));
+            if (flights.length < 4) {
+              showMoreBtn.remove();
+            } else {
+              showMoreBtn.dataset.offset = offset + flights.length;
+              showMoreBtn.disabled = false;
+              showMoreBtn.textContent = 'Show more';
+            }
+          });
+      }
+    });
 
     const CALLSIGN_TABLE_HEAD_HTML = `<thead>
       <tr>

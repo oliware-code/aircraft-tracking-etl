@@ -14,6 +14,90 @@ def haversine_km(lat1, lon1, lat2, lon2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
+STALE_AIRBORNE_MINUTES = 30
+
+# Some aircraft go completely silent while parked at the gate (transponder
+# powered down), so a real ground stopover can show zero state rows and never
+# record on_ground=true. Without this, flight segmentation (which otherwise
+# only splits on an actual recorded on_ground change) stitches the two real
+# flights either side of that stopover into one, e.g. a 13.5h GRU layover
+# read as a single continuous airborne "flight" from FRA to GRU and back.
+#
+# A long gap alone isn't a safe signal on its own, though: a transoceanic
+# flight can have a multi-hour real ADS-B coverage gap (observed: ~6.5h over
+# the Atlantic) while genuinely still cruising the whole time. So a gap only
+# counts as a segment boundary if the aircraft also barely moved across it
+# (SEGMENT_GAP_STATIONARY_KM) -- distinguishing "sat at the gate" from "kept
+# flying through a coverage gap" far more reliably than duration alone.
+SEGMENT_GAP_HOURS = 3
+SEGMENT_GAP_STATIONARY_KM = 50
+
+# Shared "did this flight really pause here" boundary condition, used by every
+# function that segments `states` into flight instances (get_status_since,
+# get_recent_flights_by_callsign, get_recent_flights_by_icao24, and
+# flight_report.py's full_history_flights). Expects only bare `timestamp`,
+# `on_ground`, `longitude`, `latitude` columns in scope. A long gap only
+# counts as a boundary given *positive* evidence of staying put (both
+# positions known and close together) -- NOT by default when position is
+# missing on either side. A real long-haul flight can have a stretch where
+# altitude/speed still report but position briefly doesn't (observed: a
+# genuine MEX-BCN flight with a few null-position rows mid-Atlantic); defaulting
+# to "split" in that case wrongly cut a real single flight in two.
+SEGMENT_CHANGED_SQL = f"""(on_ground IS DISTINCT FROM LAG(on_ground) OVER (ORDER BY timestamp))
+    OR (
+        timestamp - LAG(timestamp) OVER (ORDER BY timestamp) > INTERVAL '{SEGMENT_GAP_HOURS} hours'
+        AND longitude IS NOT NULL AND latitude IS NOT NULL
+        AND LAG(longitude) OVER (ORDER BY timestamp) IS NOT NULL
+        AND LAG(latitude) OVER (ORDER BY timestamp) IS NOT NULL
+        AND 2 * 6371 * ASIN(SQRT(
+            POWER(SIN(RADIANS((latitude - LAG(latitude) OVER (ORDER BY timestamp)) / 2)), 2) +
+            COS(RADIANS(LAG(latitude) OVER (ORDER BY timestamp))) * COS(RADIANS(latitude)) *
+            POWER(SIN(RADIANS((longitude - LAG(longitude) OVER (ORDER BY timestamp)) / 2)), 2)
+        )) < {SEGMENT_GAP_STATIONARY_KM}
+    )"""
+
+
+def _resolve_live_status(on_ground, callsign, latitude, longitude, geo_altitude, timestamp, conn):
+    """Return "on ground" or "airborne" for a live status display. Normally just
+    mirrors the raw on_ground flag, but if it claims airborne while stale (no
+    contact in STALE_AIRBORNE_MINUTES) and the reading also looks like a landing
+    (near the route's destination, low altitude above its elevation -- same
+    check as classify_flight_status), returns "on ground" instead. ADS-B often
+    drops out right at touchdown before a ground-contact squitter is ever
+    received, so blindly trusting a stale on_ground=False reading understates
+    what's actually happened.
+
+    Display-only: status_watch.py's real-time notification logic reacts to
+    fresh on_ground transitions, not this inference, so notifications aren't
+    affected by this fallback.
+    """
+    if on_ground:
+        return "on ground"
+
+    minutes_since = (datetime.now(timezone.utc) - timestamp).total_seconds() / 60
+    if minutes_since <= STALE_AIRBORNE_MINUTES:
+        return "airborne"
+    if geo_altitude is None or latitude is None or longitude is None or not callsign:
+        return "airborne"
+
+    route = get_route_for_callsign(callsign, conn=conn)
+    destination = (
+        get_airport_by_iata(route["iata_destination"], conn=conn)
+        if route and route.get("iata_destination")
+        else None
+    )
+    if not destination or destination["latitude"] is None or destination["longitude"] is None:
+        return "airborne"
+
+    distance_km = haversine_km(float(latitude), float(longitude), destination["latitude"], destination["longitude"])
+    elevation_m = destination["elevation"] * FEET_TO_METERS if destination["elevation"] is not None else 0
+    altitude_above_elevation_m = float(geo_altitude) - elevation_m
+
+    if distance_km <= LANDING_MAX_DISTANCE_KM and altitude_above_elevation_m <= LANDING_MAX_ALTITUDE_ABOVE_ELEVATION_M:
+        return "on ground"
+    return "airborne"
+
+
 def get_icao24_by_callsign(callsign):
     """Return all distinct icao24 addresses seen in `states` under the given callsign."""
     conn = get_connection()
@@ -83,11 +167,13 @@ def get_last_known_status(icao24, conn=None):
                 squawk,
             ) = row
 
+            callsign = callsign.strip() if callsign else None
             return {
                 "icao24": icao24,
-                "callsign": callsign.strip() if callsign else None,
+                "callsign": callsign,
                 "last_seen": timestamp,
-                "status": "on ground" if on_ground else "airborne",
+                "status": _resolve_live_status(on_ground, callsign, latitude, longitude, geo_altitude, timestamp, conn),
+                "on_ground_raw": on_ground,
                 "longitude": longitude,
                 "latitude": latitude,
                 "altitude": geo_altitude if geo_altitude is not None else barometric_altitude,
@@ -137,7 +223,8 @@ def get_last_known_status_by_callsign(callsign, conn=None):
                 "icao24": icao24,
                 "callsign": callsign,
                 "last_seen": timestamp,
-                "status": "on ground" if on_ground else "airborne",
+                "status": _resolve_live_status(on_ground, callsign, latitude, longitude, geo_altitude, timestamp, conn),
+                "on_ground_raw": on_ground,
                 "longitude": longitude,
                 "latitude": latitude,
                 "altitude": geo_altitude if geo_altitude is not None else barometric_altitude,
@@ -252,17 +339,20 @@ def get_current_flight_trail(icao24, conn=None, status=None, since=None):
 
 
 def get_status_since(icao24, conn=None):
-    """Return when the aircraft's current on_ground status began (i.e. the last state flip)."""
+    """Return when the aircraft's current on_ground status began (i.e. the last
+    state flip, OR the last time it resumed reporting after a gap longer than
+    SEGMENT_GAP_HOURS -- see that constant's comment for why a plain on_ground
+    flip alone isn't enough)."""
     owns_conn = conn is None
     conn = conn or get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT timestamp, on_ground
                 FROM (
                     SELECT timestamp, on_ground,
-                           on_ground IS DISTINCT FROM LAG(on_ground) OVER (ORDER BY timestamp) AS changed
+                           {SEGMENT_CHANGED_SQL} AS changed
                     FROM states
                     WHERE TRIM(LOWER(icao24)) = TRIM(LOWER(%s))
                 ) t
@@ -407,22 +497,24 @@ def get_watched_callsign_status(callsigns, conn=None):
 def get_recent_flights_by_callsign(callsign, limit=4, conn=None):
     """Return up to `limit` most recent flight instances for this callsign, newest
     first. A "flight" is one contiguous airborne segment (states between an
-    on_ground->airborne transition and the next airborne->on_ground one), so a
-    callsign that flies the same route daily gets one row per day, not one per
-    state vector. `in_progress` is true only for the single most recent flight if
-    it hasn't been followed by a later on-ground segment yet.
+    on_ground->airborne transition and the next airborne->on_ground one, OR a
+    gap longer than SEGMENT_GAP_HOURS with no rows at all -- see that
+    constant's comment), so a callsign that flies the same route daily gets
+    one row per day, not one per state vector. `in_progress` is true only for
+    the single most recent flight if it hasn't been followed by a later
+    on-ground segment (or long gap) yet.
     """
     owns_conn = conn is None
     conn = conn or get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 WITH flagged AS (
                     SELECT
                         timestamp, icao24, on_ground, longitude, latitude,
                         geo_altitude, ground_speed,
-                        on_ground IS DISTINCT FROM LAG(on_ground) OVER (ORDER BY timestamp) AS changed
+                        {SEGMENT_CHANGED_SQL} AS changed
                     FROM states
                     WHERE TRIM(UPPER(callsign)) = TRIM(UPPER(%s))
                 ),
@@ -477,6 +569,83 @@ def get_recent_flights_by_callsign(callsign, limit=4, conn=None):
             "ground_speed": ground_speed,
         }
         for departed_at, last_seen, in_progress, icao24, longitude, latitude, geo_altitude, ground_speed in rows
+    ]
+
+
+def get_recent_flights_by_icao24(icao24, limit=4, offset=0, conn=None):
+    """Same as get_recent_flights_by_callsign, but keyed on icao24 instead --
+    for a tracked aircraft's own flight history, since the same aircraft can
+    fly different callsigns/routes over time. Also returns each flight's own
+    callsign (the segment's last known one), so its route can be looked up
+    per-flight rather than assuming a single current callsign for the aircraft.
+    `offset` supports paging further back ("show more") beyond the initial page.
+    """
+    owns_conn = conn is None
+    conn = conn or get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                WITH flagged AS (
+                    SELECT
+                        timestamp, callsign, on_ground, longitude, latitude,
+                        geo_altitude, ground_speed,
+                        {SEGMENT_CHANGED_SQL} AS changed
+                    FROM states
+                    WHERE TRIM(LOWER(icao24)) = TRIM(LOWER(%s))
+                ),
+                segments AS (
+                    SELECT
+                        timestamp, callsign, on_ground, longitude, latitude,
+                        geo_altitude, ground_speed,
+                        SUM(CASE WHEN changed THEN 1 ELSE 0 END) OVER (ORDER BY timestamp) AS segment_id
+                    FROM flagged
+                ),
+                overall_max AS (
+                    SELECT MAX(segment_id) AS max_segment_id FROM segments
+                ),
+                airborne_segments AS (
+                    SELECT segment_id, MIN(timestamp) AS departed_at, MAX(timestamp) AS last_seen
+                    FROM segments
+                    WHERE NOT on_ground
+                    GROUP BY segment_id
+                )
+                SELECT
+                    a.departed_at, a.last_seen,
+                    (a.segment_id = overall_max.max_segment_id) AS in_progress,
+                    s.callsign, s.longitude, s.latitude, s.geo_altitude, s.ground_speed
+                FROM airborne_segments a
+                CROSS JOIN overall_max
+                JOIN LATERAL (
+                    SELECT callsign, longitude, latitude, geo_altitude, ground_speed
+                    FROM segments
+                    WHERE segment_id = a.segment_id
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                ) s ON true
+                ORDER BY a.last_seen DESC
+                LIMIT %s OFFSET %s;
+                """,
+                (icao24, limit, offset),
+            )
+            rows = cur.fetchall()
+    finally:
+        if owns_conn:
+            conn.close()
+
+    return [
+        {
+            "departed_at": departed_at,
+            "last_seen": last_seen,
+            "in_progress": in_progress,
+            "icao24": icao24,
+            "callsign": callsign,
+            "longitude": longitude,
+            "latitude": latitude,
+            "geo_altitude": geo_altitude,
+            "ground_speed": ground_speed,
+        }
+        for departed_at, last_seen, in_progress, callsign, longitude, latitude, geo_altitude, ground_speed in rows
     ]
 
 
@@ -606,6 +775,44 @@ def get_watched_callsign_flights(callsigns, limit=4, conn=None):
                         "latitude": flight["latitude"],
                     }
                 )
+    finally:
+        if owns_conn:
+            conn.close()
+    return results
+
+
+def get_tracked_aircraft_flights(icao24, limit=4, offset=0, conn=None):
+    """Return up to `limit` recent flight instances for a single tracked
+    aircraft (see get_recent_flights_by_icao24), each enriched with the route
+    flown at the time (looked up per-flight via that flight's own callsign,
+    since a tracked aircraft can fly different routes over time -- unlike
+    get_watched_callsign_flights, which has one fixed callsign per group).
+    Newest flight first. `offset` supports "show more" paging."""
+    owns_conn = conn is None
+    conn = conn or get_connection()
+    try:
+        route_cache = {}
+        results = []
+        for flight in get_recent_flights_by_icao24(icao24, limit=limit, offset=offset, conn=conn):
+            callsign = flight["callsign"]
+            if callsign not in route_cache:
+                route_cache[callsign] = get_route_for_callsign(callsign, conn=conn) if callsign else None
+            route = route_cache[callsign]
+            route_label = (
+                f"{route['iata_origin']} → {route['iata_destination']}"
+                if route and route["iata_origin"] and route["iata_destination"]
+                else None
+            )
+            status = classify_flight_status(flight, route, conn=conn)
+            results.append(
+                {
+                    "callsign": callsign,
+                    "route": route_label,
+                    "departed_at": flight["departed_at"],
+                    "last_seen": flight["last_seen"],
+                    "status": status,
+                }
+            )
     finally:
         if owns_conn:
             conn.close()

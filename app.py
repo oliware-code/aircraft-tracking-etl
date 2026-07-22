@@ -21,6 +21,7 @@ from queries import (
     get_route_for_callsign,
     get_states_ingest_history,
     get_status_since,
+    get_tracked_aircraft_flights,
     get_watched_callsign_flights,
     get_watched_callsign_status,
 )
@@ -196,6 +197,12 @@ def _build_named_data():
                 a["status_duration_label"] = "for"
                 a["status_duration_epoch"] = int(since["since"].timestamp())
 
+            if a["tracked_by"] == "icao24":
+                a["recent_flights"] = get_tracked_aircraft_flights(a["icao24"], limit=4, conn=conn)
+                for f in a["recent_flights"]:
+                    f["departed_epoch"] = int(f["departed_at"].timestamp())
+                    f["last_seen_epoch"] = int(f["last_seen"].timestamp())
+
             if a["status"] and a["status"]["latitude"] is not None and a["status"]["longitude"] is not None:
                 trail = (
                     get_current_flight_trail(a["icao24"], conn=conn, status=a["status"], since=since)
@@ -263,6 +270,18 @@ def _serialize_named_aircraft(aircraft):
                 "tracked_by": a["tracked_by"],
                 "status_duration_label": a["status_duration_label"],
                 "status_duration_epoch": a["status_duration_epoch"],
+                "recent_flights": [
+                    {
+                        "callsign": f["callsign"],
+                        "route": f["route"],
+                        "status": f["status"],
+                        "departed_epoch": f["departed_epoch"],
+                        "last_seen_epoch": f["last_seen_epoch"],
+                    }
+                    for f in a["recent_flights"]
+                ]
+                if a["tracked_by"] == "icao24"
+                else None,
                 "status": None
                 if status is None
                 else {
@@ -343,6 +362,27 @@ def data():
             "states_count": last_ingest["states_count"],
             "fetched_at_epoch": int(last_ingest["fetched_at"].timestamp()),
         },
+    )
+
+
+@app.route("/aircraft/<icao24>/flights")
+def aircraft_flights(icao24):
+    """"Show more" pagination for a tracked aircraft's flight history --
+    the initial page comes from _build_named_data (offset=0), this serves
+    subsequent pages on demand."""
+    offset = request.args.get("offset", default=0, type=int)
+    flights = get_tracked_aircraft_flights(icao24, limit=4, offset=offset)
+    return jsonify(
+        [
+            {
+                "callsign": f["callsign"],
+                "route": f["route"],
+                "status": f["status"],
+                "departed_epoch": int(f["departed_at"].timestamp()),
+                "last_seen_epoch": int(f["last_seen"].timestamp()),
+            }
+            for f in flights
+        ]
     )
 
 
