@@ -9,6 +9,7 @@ import requests
 from approach_alerts import check_aircraft_approach_alerts, check_aircraft_heading_to_mex, check_callsign_approach_alerts
 from credentials import CLIENT_ID, CLIENT_SECRET
 from db_connection import get_connection
+from opensky_health import check_opensky_health
 from route_enrichment import resolve_aircraft, resolve_route
 from status_watch import check_callsign_status_changes, check_stale_airborne_landings, check_status_changes
 
@@ -47,6 +48,7 @@ class CachedOpenSkyClient:
         self.client_id = client_id
         self.client_secret = client_secret
         self.session = requests.Session()
+        self.last_error = None
 
     def _get_new_token(self):
         """Perform the OAuth2 exchange and save to disk."""
@@ -95,6 +97,7 @@ class CachedOpenSkyClient:
             logging.info(f"📡 API Call: {response.status_code} | Credits: {response.headers.get('X-Rate-Limit-Remaining')}")
 
             if response.status_code == 200:
+                self.last_error = None
                 return response.json()
             elif response.status_code == 401:
                 # Force a token refresh next time if we get a 401
@@ -105,6 +108,7 @@ class CachedOpenSkyClient:
             response.raise_for_status()
         except Exception as e:
             logging.error(f"❌ API Error: {e}")
+            self.last_error = str(e)
         return None
 
 
@@ -176,6 +180,10 @@ if __name__ == "__main__":
     configure_logging()
     client = CachedOpenSkyClient(CLIENT_ID, CLIENT_SECRET)
     states = client.get_all_states()
+    try:
+        check_opensky_health(states is not None, client.last_error)
+    except Exception as e:
+        logging.error(f"❌ OpenSky health-check error: {e}")
     if states and states["states"]:
         logging.info(f"Snapshot timestamp: {epoch_to_utc(states['time'])}")
         try:
