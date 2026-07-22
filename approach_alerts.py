@@ -3,7 +3,7 @@ import logging
 
 from db_connection import get_connection
 from notify import send_notification
-from queries import get_airport_by_iata, get_friendly_name, get_route_for_callsign, get_status_since, haversine_km
+from queries import get_aircraft_info, get_airport_by_iata, get_friendly_name, get_route_for_callsign, get_status_since, haversine_km
 from status_watch import load_callsign_watchlist, load_watchlist
 
 APPROACH_THRESHOLD_MINUTES = 10
@@ -134,9 +134,15 @@ def _check_approach(state, destination_iata, emphatic, conn):
     if not (0 < eta_minutes <= APPROACH_THRESHOLD_MINUTES):
         return
 
-    label = _label_for(icao24, callsign, conn)
+    info = get_aircraft_info(icao24, conn=conn) if icao24 else None
+    registration = info["registration"] if info else None
+    aircraft_text = f"{icao24}/{registration}" if registration else (icao24 or "?")
+
+    hours, minutes = divmod(int(round(eta_minutes)), 60)
+    eta_text = f"{hours}h {minutes:02d}m" if hours else f"{minutes}m"
+
     prefix = "🚨 " if emphatic and _is_non_amx(callsign) else ""
-    message = f"{prefix}🛬 {label} is approaching {destination_iata} (ETA ~{eta_minutes:.0f} min)."
+    message = f"{prefix}🛬 {html.escape(callsign)} is approaching {destination_iata} | {html.escape(aircraft_text)} | ETA {eta_text}"
 
     logging.info(f"Approach alert: {message}")
     send_notification(message, parse_mode="HTML")
