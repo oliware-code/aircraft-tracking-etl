@@ -3,11 +3,10 @@ import logging
 
 from db_connection import get_connection
 from notify import send_notification
-from queries import get_aircraft_info, get_airport_by_iata, get_friendly_name, get_route_for_callsign, get_status_since, haversine_km
+from queries import DESTINATION_IATA, get_aircraft_info, get_airport_by_iata, get_friendly_name, get_route_for_callsign, get_status_since, haversine_km
 from status_watch import load_callsign_watchlist, load_watchlist
 
 APPROACH_THRESHOLD_MINUTES = 10
-DESTINATION_IATA = "MEX"
 
 # Reused from the old one-shot approach-alert dedup (removed when approach
 # alerts became repeating) for a different purpose now: deduping the

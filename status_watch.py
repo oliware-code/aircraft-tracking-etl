@@ -9,6 +9,7 @@ import yaml
 from db_connection import get_connection
 from notify import send_notification
 from queries import (
+    DESTINATION_IATA,
     get_aircraft_info,
     get_airport_by_iata,
     get_friendly_name,
@@ -113,6 +114,17 @@ def check_status_changes(states, watchlist=None):
             previous_on_ground = previous["status"] == "on ground"
             if previous_on_ground == new_on_ground:
                 continue
+
+            if not new_on_ground:
+                # Getting airborne on a route destined for MEX is also covered by
+                # check_aircraft_heading_to_mex (approach_alerts.py), which sends a
+                # more detailed one-shot alert (origin, ETA, emphatic non-AMX
+                # styling) for the same takeoff. Skip the generic message here so
+                # watched_aircraft doesn't get both for one event; non-MEX-bound
+                # takeoffs (and all landings) are unaffected.
+                route = get_route_for_callsign(callsign, conn=conn) if callsign else None
+                if route and route["iata_destination"] == DESTINATION_IATA:
+                    continue
 
             _send_status_change_notification(icao24, callsign, new_on_ground, conn)
     finally:

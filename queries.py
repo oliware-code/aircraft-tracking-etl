@@ -14,6 +14,10 @@ def haversine_km(lat1, lon1, lat2, lon2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
+# Shared between approach_alerts.py and status_watch.py -- lives here (rather
+# than in either of those, which import each other) to avoid a circular import.
+DESTINATION_IATA = "MEX"
+
 STALE_AIRBORNE_MINUTES = 30
 
 # Some aircraft go completely silent while parked at the gate (transponder
