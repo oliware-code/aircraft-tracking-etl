@@ -116,11 +116,38 @@ def check_status_changes(states, watchlist=None):
         conn.close()
 
 
+def _send_first_detected_notification(icao24, callsign, on_ground, conn):
+    """Build and send the "first detected" message for a watched callsign's new
+    flight instance -- distinct wording from _send_status_change_notification
+    since there's no prior state to describe a *change* from, just what we
+    first saw it doing."""
+    friendly_name = get_friendly_name(icao24, conn=conn) if icao24 else None
+    identifier = f"{html.escape(callsign)} / {icao24}" if callsign else icao24
+    label = f"<b>{html.escape(friendly_name)}</b> ({identifier})" if friendly_name else identifier
+    state_text = "on the ground" if on_ground else "airborne"
+    message = f"👀 First detected: {label} is currently {state_text}."
+
+    route = get_route_for_callsign(callsign, conn=conn) if callsign else None
+    if route and route["iata_origin"] and route["iata_destination"]:
+        message += f" Route: {route['iata_origin']} → {route['iata_destination']}"
+
+    logging.info(f"Callsign watchlist: {message}")
+    send_notification(message, parse_mode="HTML")
+
+
 def check_callsign_status_changes(states, watchlist=None):
     """Notify for each watched callsign in this snapshot whose on_ground flag flipped
     since its previously stored state, tracking whichever aircraft currently flies it
     rather than a specific icao24. Must be called before the snapshot is inserted, for
     the same reason as check_status_changes.
+
+    A callsign's very first flight instance -- where there's no prior state
+    to compare against at all -- also gets a notification (first detected on
+    the ground, or first detected airborne), rather than being silently
+    skipped. Every flight after that keeps working via the normal
+    landed/airborne transition detection below, so this only actually
+    changes behavior for a genuinely new callsign (or right after a
+    real gap where no prior state exists).
     """
     watchlist = load_callsign_watchlist() if watchlist is None else watchlist
     if not watchlist or not states.get("states"):
@@ -143,7 +170,7 @@ def check_callsign_status_changes(states, watchlist=None):
             new_on_ground = state[8]
 
             if previous is None:
-                logging.info(f"Callsign watchlist: first sighting of {callsign} ({icao24}), currently {'on the ground' if new_on_ground else 'airborne'}.")
+                _send_first_detected_notification(icao24, callsign, new_on_ground, conn)
                 continue
 
             previous_on_ground = previous["status"] == "on ground"

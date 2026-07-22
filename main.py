@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from approach_alerts import check_approach_alerts
+from approach_alerts import check_aircraft_approach_alerts, check_aircraft_heading_to_mex, check_callsign_approach_alerts
 from credentials import CLIENT_ID, CLIENT_SECRET
 from db_connection import get_connection
 from route_enrichment import resolve_aircraft, resolve_route
@@ -194,9 +194,17 @@ if __name__ == "__main__":
         except Exception as e:
             logging.error(f"❌ Stale-airborne-landing notification error: {e}")
         try:
-            check_approach_alerts(states)
+            check_aircraft_heading_to_mex(states)
         except Exception as e:
-            logging.error(f"❌ Approach alert error: {e}")
+            logging.error(f"❌ MEX-bound flight detection error: {e}")
+        try:
+            check_aircraft_approach_alerts(states)
+        except Exception as e:
+            logging.error(f"❌ Aircraft approach alert error: {e}")
+        try:
+            check_callsign_approach_alerts(states)
+        except Exception as e:
+            logging.error(f"❌ Callsign approach alert error: {e}")
         db_connection = get_connection()
         try:
             ingest_snapshot(states, db_connection)
