@@ -52,7 +52,9 @@ def check_opensky_health(success, error_text=None):
             }
             message = f"🔴 OpenSky API appears to be down: {error_text}"
             logging.info(f"OpenSky health: {message}")
-            send_notification(message)
+            # error_text often contains the raw API URL -- keep it as visible,
+            # clickable text but suppress Telegram's big link-preview card for it.
+            send_notification(message, disable_link_preview=True)
         else:
             state["last_error"] = error_text
         _save_health_state(state)
