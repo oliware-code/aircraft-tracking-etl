@@ -991,7 +991,7 @@ def get_latest_snapshot():
     return max_ts, aircraft
 
 
-NEARBY_TRAFFIC_RADIUS_KM = 30
+NEARBY_TRAFFIC_RADIUS_KM = 50
 
 
 def get_aircraft_near_airport(iata, radius_km=NEARBY_TRAFFIC_RADIUS_KM, conn=None):
