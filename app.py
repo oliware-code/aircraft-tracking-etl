@@ -25,7 +25,7 @@ from queries import (
     get_watched_callsign_flights,
     get_watched_callsign_status,
 )
-from status_watch import load_callsign_watchlist, load_watchlist
+from status_watch import load_callsign_watchlist, load_watchlist_with_names
 
 app = Flask(__name__)
 
@@ -165,15 +165,14 @@ def lookup():
 def _build_named_data():
     conn = get_connection()
     try:
-        aircraft = get_named_aircraft_status(conn=conn)
+        # notify_watchlist.yaml is the source of truth for which aircraft show
+        # up here at all, and its list order is the display order -- see
+        # get_named_aircraft_status's docstring for why this replaced a
+        # friendly_name-in-the-database gate that could silently hide an
+        # aircraft someone had just added to the watchlist.
+        aircraft = get_named_aircraft_status(load_watchlist_with_names(), conn=conn)
         for a in aircraft:
             a["tracked_by"] = "icao24"
-
-        # Display order follows notify_watchlist.yaml's list order rather than the
-        # alphabetical-by-friendly_name order the query returns; anything with a
-        # friendly_name but not in the YAML falls back to the end, in its existing order.
-        icao24_order = {icao24: i for i, icao24 in enumerate(load_watchlist())}
-        aircraft.sort(key=lambda a: icao24_order.get(a["icao24"], len(icao24_order)))
 
         named_icao24s = {a["icao24"] for a in aircraft}
         watched_callsigns = load_callsign_watchlist()
@@ -264,6 +263,7 @@ def _serialize_named_aircraft(aircraft):
             {
                 "icao24": a["icao24"],
                 "friendly_name": a["friendly_name"],
+                "needs_friendly_name": a.get("needs_friendly_name", False),
                 "registration": a["registration"],
                 "aircraft_type": a["aircraft_type"],
                 "manufacturer": a["manufacturer"],

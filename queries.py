@@ -430,29 +430,47 @@ def get_aircraft_info(icao24, conn=None):
     }
 
 
-def get_named_aircraft_status(conn=None):
-    """Return current status for every aircraft in `aircraft` with a non-null friendly_name."""
+def get_named_aircraft_status(watchlist_entries, conn=None):
+    """Return current status for every aircraft in `watchlist_entries`
+    (ordered (icao24, yaml_comment) tuples -- see
+    status_watch.load_watchlist_with_names), in that exact order.
+
+    notify_watchlist.yaml is the source of truth for which aircraft show up
+    here, not the aircraft table: uses the aircraft table's friendly_name if
+    set, otherwise falls back to the watchlist's YAML comment (or the bare
+    icao24 if there isn't even that) as a display name, and flags
+    needs_friendly_name=True so the frontend can prompt for a real one to be
+    set in the database. Being in the watchlist alone used to get an aircraft
+    notifications and a sort position but not visibility here, which was a
+    confusing gap -- adding an icao24 to the watchlist now always makes it
+    show up, with a fallback name at worst.
+    """
     owns_conn = conn is None
     conn = conn or get_connection()
     try:
+        icao24s = [icao24 for icao24, _ in watchlist_entries]
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT icao24, friendly_name, registration, aircraft_type, manufacturer
                 FROM aircraft
-                WHERE friendly_name IS NOT NULL
-                ORDER BY friendly_name;
-                """
+                WHERE icao24 = ANY(%s);
+                """,
+                (icao24s,),
             )
-            aircraft_rows = cur.fetchall()
+            by_icao24 = {row[0]: row[1:] for row in cur.fetchall()}
 
         results = []
-        for icao24, friendly_name, registration, aircraft_type, manufacturer in aircraft_rows:
+        for icao24, yaml_comment in watchlist_entries:
+            friendly_name, registration, aircraft_type, manufacturer = by_icao24.get(
+                icao24, (None, None, None, None)
+            )
             status = get_last_known_status(icao24, conn=conn)
             results.append(
                 {
                     "icao24": icao24,
-                    "friendly_name": friendly_name,
+                    "friendly_name": friendly_name or yaml_comment or icao24,
+                    "needs_friendly_name": not friendly_name,
                     "registration": registration,
                     "aircraft_type": aircraft_type,
                     "manufacturer": manufacturer,

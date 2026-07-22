@@ -1,6 +1,7 @@
 import html
 import json
 import logging
+import re
 from pathlib import Path
 
 import yaml
@@ -18,12 +19,39 @@ WATCHLIST_PATH = Path(__file__).with_name("notify_watchlist.yaml")
 STALE_LANDING_STATE_PATH = Path(__file__).with_name("stale_landing_state.json")
 
 
+def load_watchlist_with_names(path=WATCHLIST_PATH):
+    """Return the watched_aircraft entries as an ordered list of (icao24,
+    yaml_comment) tuples (deduplicated, first occurrence wins), preserving
+    each entry's trailing "# comment" as a human-assigned name -- e.g.
+    "- 8691aa  # ANA Pokemon" -> ("8691aa", "ANA Pokemon"). yaml_comment is
+    None if an entry has no comment. PyYAML's safe_load discards comments
+    entirely, so this reads the raw text instead; used as a fallback display
+    name for aircraft the `aircraft` table doesn't have a friendly_name for
+    yet (see get_named_aircraft_status)."""
+    with open(path) as f:
+        content = f.read()
+
+    match = re.search(r"^watched_aircraft:\s*\n((?:[ \t]+.*\n?)*)", content, re.MULTILINE)
+    block = match.group(1) if match else ""
+
+    entries = []
+    seen = set()
+    for line in block.splitlines():
+        item = re.match(r"\s*-\s*(\S+)\s*(?:#\s*(.*))?$", line)
+        if not item:
+            continue
+        icao24 = item.group(1).strip().lower()
+        comment = (item.group(2) or "").strip() or None
+        if icao24 and icao24 not in seen:
+            seen.add(icao24)
+            entries.append((icao24, comment))
+    return entries
+
+
 def load_watchlist(path=WATCHLIST_PATH):
     """Return the watched icao24s in the same order they're listed in the YAML file
     (deduplicated, first occurrence wins)."""
-    with open(path) as f:
-        data = yaml.safe_load(f) or {}
-    return list(dict.fromkeys(icao24.strip().lower() for icao24 in data.get("watched_aircraft", [])))
+    return [icao24 for icao24, _ in load_watchlist_with_names(path)]
 
 
 def load_callsign_watchlist(path=WATCHLIST_PATH):

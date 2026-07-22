@@ -109,6 +109,10 @@
     margin-top: 0;
     width: 100%;
   }
+  .needs-name-hint {
+    color: #b45309;
+    font-size: 0.8rem;
+  }
   .show-more-flights {
     margin-top: 0.5rem;
     background: none;
@@ -145,6 +149,7 @@
     table.aircraft th { color: #999; }
     .row-toggle { color: #999; }
     .flight-history-row td { border-bottom-color: #333; }
+    .needs-name-hint { color: #fbbf24; }
     .show-more-flights { border-color: #475569; color: #cbd5e1; }
     .status-badge { background: #14532d; color: #bbf7d0; }
     .status-badge.ground { background: #78350f; color: #fde68a; }
@@ -241,6 +246,9 @@
           <span style="color:#888; font-size:0.85rem;">
             {{ [a.manufacturer, a.aircraft_type] | select | join(' · ') }}
           </span>
+          {% if a.needs_friendly_name %}
+            <br><span class="needs-name-hint" title="Set aircraft.friendly_name in the database for this icao24">⚠ set friendly_name in DB</span>
+          {% endif %}
         </td>
         <td class="num">{{ a.icao24 }}</td>
         <td class="num">{{ a.registration or "—" }}</td>
@@ -578,10 +586,14 @@
 
     function buildAircraftRowHtml(a) {
       const infoLine = [a.manufacturer, a.aircraft_type].filter(Boolean).join(' · ');
+      const nameHint = a.needs_friendly_name
+        ? '<br><span class="needs-name-hint" title="Set aircraft.friendly_name in the database for this icao24">⚠ set friendly_name in DB</span>'
+        : '';
       const toggleCell = `<td class="expand-toggle"><button type="button" class="row-toggle" aria-expanded="false">▸</button></td>`;
       const nameCell = `<td>
           <strong>${escapeHtml(a.friendly_name)}</strong><br>
           <span style="color:#888; font-size:0.85rem;">${escapeHtml(infoLine)}</span>
+          ${nameHint}
         </td>
         <td class="num">${escapeHtml(a.icao24)}</td>
         <td class="num">${escapeHtml(a.registration) || '—'}</td>`;
