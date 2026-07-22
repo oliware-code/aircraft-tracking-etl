@@ -21,6 +21,7 @@ from queries import (
 
 WATCHLIST_PATH = Path(__file__).with_name("notify_watchlist.yaml")
 STALE_LANDING_STATE_PATH = Path(__file__).with_name("stale_landing_state.json")
+PENDING_AIRBORNE_STATE_PATH = Path(__file__).with_name("pending_airborne_state.json")
 
 
 def load_watchlist_with_names(path=WATCHLIST_PATH):
@@ -87,6 +88,58 @@ def _send_status_change_notification(icao24, callsign, new_on_ground, conn):
     send_notification(message, parse_mode="HTML")
 
 
+def _load_pending_airborne_state():
+    if not PENDING_AIRBORNE_STATE_PATH.exists():
+        return {}
+    return json.loads(PENDING_AIRBORNE_STATE_PATH.read_text())
+
+
+def _save_pending_airborne_state(state):
+    PENDING_AIRBORNE_STATE_PATH.write_text(json.dumps(state))
+
+
+def _resolve_pending_airborne_notifications(conn):
+    """Send (or drop) the generic "is now airborne" message for watched_aircraft
+    whose callsign wasn't broadcasting yet at the exact moment their takeoff was
+    first detected -- ADS-B commonly doesn't report a callsign in the first
+    snapshot or two after rotation. Deciding right then whether the route is
+    MEX-bound (to skip in favor of check_aircraft_heading_to_mex) would just
+    guess "no" every time, and the callsign resolving a cycle later on a
+    MEX-bound flight is exactly what produced the duplicate this whole
+    mechanism exists to prevent. Re-checked every cycle: once the callsign
+    resolves, decide for real; if the aircraft lands again first without ever
+    giving one (rare), drop it silently instead of sending a stale "is now
+    airborne" after the fact.
+    """
+    pending = _load_pending_airborne_state()
+    if not pending:
+        return
+
+    changed = False
+    for icao24 in list(pending.keys()):
+        status = get_last_known_status(icao24, conn=conn)
+        if status is None:
+            continue
+
+        if status["status"] == "on ground":
+            del pending[icao24]
+            changed = True
+            continue
+
+        callsign = (status["callsign"] or "").strip() or None
+        if not callsign:
+            continue  # still waiting
+
+        route = get_route_for_callsign(callsign, conn=conn)
+        if not (route and route["iata_destination"] == DESTINATION_IATA):
+            _send_status_change_notification(icao24, callsign, False, conn)
+        del pending[icao24]
+        changed = True
+
+    if changed:
+        _save_pending_airborne_state(pending)
+
+
 def check_status_changes(states, watchlist=None):
     """Notify for each watched icao24 in this snapshot whose on_ground flag flipped
     since its previously stored state. Must be called before the snapshot is inserted,
@@ -96,12 +149,14 @@ def check_status_changes(states, watchlist=None):
     if not watchlist or not states.get("states"):
         return
 
-    snapshot_by_icao24 = {s[0]: s for s in states["states"] if s[0] in watchlist}
-    if not snapshot_by_icao24:
-        return
-
     conn = get_connection()
     try:
+        _resolve_pending_airborne_notifications(conn)
+
+        snapshot_by_icao24 = {s[0]: s for s in states["states"] if s[0] in watchlist}
+        if not snapshot_by_icao24:
+            return
+
         for icao24, state in snapshot_by_icao24.items():
             previous = get_last_known_status(icao24, conn=conn)
             new_on_ground = state[8]
@@ -122,7 +177,16 @@ def check_status_changes(states, watchlist=None):
                 # styling) for the same takeoff. Skip the generic message here so
                 # watched_aircraft doesn't get both for one event; non-MEX-bound
                 # takeoffs (and all landings) are unaffected.
-                route = get_route_for_callsign(callsign, conn=conn) if callsign else None
+                if not callsign:
+                    # Route can't be determined yet -- defer instead of assuming
+                    # "not MEX-bound" and possibly duplicating the alert above once
+                    # the callsign resolves. See _resolve_pending_airborne_notifications.
+                    pending = _load_pending_airborne_state()
+                    pending[icao24] = True
+                    _save_pending_airborne_state(pending)
+                    continue
+
+                route = get_route_for_callsign(callsign, conn=conn)
                 if route and route["iata_destination"] == DESTINATION_IATA:
                     continue
 
