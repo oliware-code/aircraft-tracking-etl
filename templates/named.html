@@ -118,7 +118,7 @@
 </head>
 <body>
   <div class="top-row">
-    <a class="back" href="/">&larr; Back to lookup</a>
+    <a class="back" href="/lookup">&larr; Back to lookup</a>
     <div class="map-controls">
       <label class="switch">
         <input type="checkbox" id="airport-toggle" checked>
@@ -595,7 +595,7 @@
     }
 
     function refreshData() {
-      fetch('/named/data')
+      fetch('/data')
         .then((r) => r.json())
         .then((data) => {
           renderMarkers(data.markers);

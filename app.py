@@ -107,8 +107,8 @@ def _status_duration(icao24):
     return "for", int(since["since"].timestamp())
 
 
-@app.route("/", methods=["GET", "POST"])
-def index():
+@app.route("/lookup", methods=["GET", "POST"])
+def lookup():
     results = None
     status = None
     history = None
@@ -300,12 +300,12 @@ def _serialize_callsign_flights(callsign_flights):
     ]
 
 
-@app.route("/named")
-def named():
+@app.route("/")
+def index():
     aircraft, markers, callsign_flights = _build_named_data()
     airports = get_all_airports()
     last_ingest = get_last_ingest_summary()
-    # Deliberately not part of /named/data's live refresh: this is a coarse
+    # Deliberately not part of /data's live refresh: this is a coarse
     # (hourly-bucketed) 72h history, cheap once per page load but not worth
     # recomputing on every ~2-minute SSE-triggered refresh.
     ingest_history = [
@@ -327,8 +327,8 @@ def named():
     )
 
 
-@app.route("/named/data")
-def named_data():
+@app.route("/data")
+def data():
     aircraft, markers, callsign_flights = _build_named_data()
     airports = get_all_airports()
     last_ingest = get_last_ingest_summary()
