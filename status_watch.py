@@ -9,10 +9,13 @@ import yaml
 from db_connection import get_connection
 from notify import send_notification
 from queries import (
+    get_aircraft_info,
+    get_airport_by_iata,
     get_friendly_name,
     get_last_known_status,
     get_last_known_status_by_callsign,
     get_route_for_callsign,
+    haversine_km,
 )
 
 WATCHLIST_PATH = Path(__file__).with_name("notify_watchlist.yaml")
@@ -116,20 +119,39 @@ def check_status_changes(states, watchlist=None):
         conn.close()
 
 
-def _send_first_detected_notification(icao24, callsign, on_ground, conn):
-    """Build and send the "first detected" message for a watched callsign's new
-    flight instance -- distinct wording from _send_status_change_notification
-    since there's no prior state to describe a *change* from, just what we
-    first saw it doing."""
-    friendly_name = get_friendly_name(icao24, conn=conn) if icao24 else None
-    identifier = f"{html.escape(callsign)} / {icao24}" if callsign else icao24
-    label = f"<b>{html.escape(friendly_name)}</b> ({identifier})" if friendly_name else identifier
-    state_text = "on the ground" if on_ground else "airborne"
-    message = f"👀 First detected: {label} is currently {state_text}."
+def _send_first_detected_notification(icao24, callsign, on_ground, longitude, latitude, ground_speed, conn):
+    """Build and send the "new flight instance" message for a watched
+    callsign's new flight instance -- distinct wording/format from
+    _send_status_change_notification since there's no prior state to
+    describe a *change* from, just what we first saw it doing.
 
+    ETA is a straight-line estimate to the route's destination based on
+    current position/speed (same math as the approach alerts), not a
+    turn-by-turn estimate -- shown as "--" whenever it can't be computed
+    (already on the ground, missing position/speed, or no known route yet).
+    """
     route = get_route_for_callsign(callsign, conn=conn) if callsign else None
-    if route and route["iata_origin"] and route["iata_destination"]:
-        message += f" Route: {route['iata_origin']} → {route['iata_destination']}"
+    origin = route["iata_origin"] if route else None
+    destination = route["iata_destination"] if route else None
+    route_text = f"{origin}-{destination}" if origin and destination else "unknown route"
+
+    info = get_aircraft_info(icao24, conn=conn) if icao24 else None
+    registration = info["registration"] if info else None
+    aircraft_text = f"{icao24}/{registration}" if registration else (icao24 or "?")
+
+    eta_text = "--"
+    if not on_ground and destination and longitude is not None and latitude is not None and ground_speed and ground_speed > 0:
+        dest_airport = get_airport_by_iata(destination, conn=conn)
+        if dest_airport and dest_airport["latitude"] is not None and dest_airport["longitude"] is not None:
+            distance_km = haversine_km(latitude, longitude, dest_airport["latitude"], dest_airport["longitude"])
+            eta_minutes = (distance_km / (ground_speed * 3.6)) * 60
+            hours, minutes = divmod(int(round(eta_minutes)), 60)
+            eta_text = f"{hours}h {minutes:02d}m" if hours else f"{minutes}m"
+
+    message = (
+        f"🛫 New {html.escape(callsign)} instance ({route_text}) "
+        f"| Aircraft {html.escape(aircraft_text)} | ETA: {eta_text}"
+    )
 
     logging.info(f"Callsign watchlist: {message}")
     send_notification(message, parse_mode="HTML")
@@ -142,8 +164,8 @@ def check_callsign_status_changes(states, watchlist=None):
     the same reason as check_status_changes.
 
     A callsign's very first flight instance -- where there's no prior state
-    to compare against at all -- also gets a notification (first detected on
-    the ground, or first detected airborne), rather than being silently
+    to compare against at all -- also gets a notification ("new flight
+    detected", on the ground or airborne), rather than being silently
     skipped. Every flight after that keeps working via the normal
     landed/airborne transition detection below, so this only actually
     changes behavior for a genuinely new callsign (or right after a
@@ -170,7 +192,8 @@ def check_callsign_status_changes(states, watchlist=None):
             new_on_ground = state[8]
 
             if previous is None:
-                _send_first_detected_notification(icao24, callsign, new_on_ground, conn)
+                longitude, latitude, ground_speed = state[5], state[6], state[9]
+                _send_first_detected_notification(icao24, callsign, new_on_ground, longitude, latitude, ground_speed, conn)
                 continue
 
             previous_on_ground = previous["status"] == "on ground"
