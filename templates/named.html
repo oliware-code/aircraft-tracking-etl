@@ -127,6 +127,19 @@
     cursor: default;
     opacity: 0.6;
   }
+  .refresh-button {
+    background: none;
+    border: 1px solid #2563eb;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: #2563eb;
+    padding: 0.3rem 0.7rem;
+  }
+  .refresh-button:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
   table.aircraft {
     border-collapse: collapse;
     width: 100%;
@@ -151,6 +164,7 @@
     .flight-history-row td { border-bottom-color: #333; }
     .needs-name-hint { color: #fbbf24; }
     .show-more-flights { border-color: #475569; color: #cbd5e1; }
+    .refresh-button { border-color: #60a5fa; color: #60a5fa; }
     .status-badge { background: #14532d; color: #bbf7d0; }
     .status-badge.ground { background: #78350f; color: #fde68a; }
     .status-badge.lost-signal { background: #334155; color: #cbd5e1; }
@@ -177,6 +191,7 @@
         <span class="slider"></span>
       </label>
       <span>Show nearby traffic</span>
+      <button type="button" class="refresh-button" id="refresh-button">Refresh data</button>
       <span id="last-ingest-info">
         {% if last_ingest %}
           <span class="ingest-badge">
@@ -865,6 +880,33 @@
     // Safety net in case the SSE connection is stuck (EventSource retries on its own,
     // but this guarantees data is never more than 5 minutes stale either way).
     setInterval(refreshData, 300000);
+
+    // Manual "Refresh data" button: triggers a brand new OpenSky poll + ingest
+    // cycle right now (not just re-fetching whatever's already in the DB).
+    // That commit also NOTIFYs new_snapshot, so /events fires refreshData()
+    // for every connected tab on its own -- calling it here too just avoids
+    // this tab waiting on that round-trip after its own click.
+    const refreshButton = document.getElementById('refresh-button');
+    refreshButton.addEventListener('click', () => {
+      refreshButton.disabled = true;
+      const originalLabel = refreshButton.textContent;
+      refreshButton.textContent = 'Refreshing…';
+      fetch('/refresh', { method: 'POST' })
+        .then((r) => r.json())
+        .then((result) => {
+          if (!result.ok) throw new Error(result.error || 'Refresh failed');
+          refreshData();
+        })
+        .catch((err) => {
+          console.error('Manual refresh failed:', err);
+          refreshButton.textContent = 'Refresh failed';
+          setTimeout(() => { refreshButton.textContent = originalLabel; }, 2000);
+        })
+        .finally(() => {
+          refreshButton.disabled = false;
+          if (refreshButton.textContent === 'Refreshing…') refreshButton.textContent = originalLabel;
+        });
+    });
   </script>
 </body>
 </html>

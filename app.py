@@ -8,6 +8,7 @@ import time
 from flask import Flask, Response, jsonify, render_template, request
 
 from db_connection import get_connection
+from main import run_ingest_cycle
 from queries import (
     NEARBY_TRAFFIC_RADIUS_KM,
     get_aircraft_near_airport,
@@ -366,6 +367,24 @@ def data():
             "fetched_at_epoch": int(last_ingest["fetched_at"].timestamp()),
         },
     )
+
+
+@app.route("/refresh", methods=["POST"])
+def refresh():
+    """Manually trigger a fresh OpenSky poll + ingest cycle right now, instead
+    of waiting for the next cron tick -- the same work main.py's cron job
+    does, via the same run_ingest_cycle() so the two can never drift apart.
+    ingest_snapshot commits NOTIFY new_snapshot as part of that cycle, so
+    every /events-connected browser (not just the one that clicked) picks up
+    the new data on its own; this just reports success/failure back to the
+    button that triggered it.
+    """
+    try:
+        states_count = run_ingest_cycle()
+    except Exception as e:
+        logging.exception("Manual refresh failed")
+        return jsonify(ok=False, error=str(e)), 500
+    return jsonify(ok=True, states_count=states_count)
 
 
 @app.route("/nearby-traffic")

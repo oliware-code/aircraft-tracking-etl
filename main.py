@@ -176,47 +176,64 @@ def ingest_snapshot(states, db_connection):
     logging.info(f"States inserted: {states_counter}")
 
 
-if __name__ == "__main__":
-    configure_logging()
+def run_ingest_cycle():
+    """Perform one full ingest cycle: fetch states from OpenSky, run every
+    watchlist/notification check, and commit the snapshot (which NOTIFYs
+    new_snapshot, waking every /events-connected browser). Called by both the
+    cron-triggered __main__ block below and app.py's manual "Refresh now"
+    route, so cron and manual refreshes can never drift apart in behavior.
+
+    Returns the number of states ingested, or None if OpenSky returned nothing.
+    """
     client = CachedOpenSkyClient(CLIENT_ID, CLIENT_SECRET)
     states = client.get_all_states()
     try:
         check_opensky_health(states is not None, client.last_error)
     except Exception as e:
         logging.error(f"❌ OpenSky health-check error: {e}")
-    if states and states["states"]:
-        logging.info(f"Snapshot timestamp: {epoch_to_utc(states['time'])}")
-        try:
-            check_status_changes(states)
-        except Exception as e:
-            logging.error(f"❌ Watchlist notification error: {e}")
-        try:
-            check_callsign_status_changes(states)
-        except Exception as e:
-            logging.error(f"❌ Callsign watchlist notification error: {e}")
-        try:
-            # Independent of this snapshot's contents -- catches aircraft whose
-            # ADS-B went silent right at touchdown, which the two checks above
-            # structurally can't (they only react to rows in the current poll).
-            check_stale_airborne_landings()
-        except Exception as e:
-            logging.error(f"❌ Stale-airborne-landing notification error: {e}")
-        try:
-            check_aircraft_heading_to_mex(states)
-        except Exception as e:
-            logging.error(f"❌ MEX-bound flight detection error: {e}")
-        try:
-            check_aircraft_approach_alerts(states)
-        except Exception as e:
-            logging.error(f"❌ Aircraft approach alert error: {e}")
-        try:
-            check_callsign_approach_alerts(states)
-        except Exception as e:
-            logging.error(f"❌ Callsign approach alert error: {e}")
-        db_connection = get_connection()
-        try:
-            ingest_snapshot(states, db_connection)
-        finally:
-            db_connection.close()
-    else:
+
+    if not states or not states["states"]:
         logging.warning("No states received; nothing to ingest.")
+        return None
+
+    logging.info(f"Snapshot timestamp: {epoch_to_utc(states['time'])}")
+    try:
+        check_status_changes(states)
+    except Exception as e:
+        logging.error(f"❌ Watchlist notification error: {e}")
+    try:
+        check_callsign_status_changes(states)
+    except Exception as e:
+        logging.error(f"❌ Callsign watchlist notification error: {e}")
+    try:
+        # Independent of this snapshot's contents -- catches aircraft whose
+        # ADS-B went silent right at touchdown, which the two checks above
+        # structurally can't (they only react to rows in the current poll).
+        check_stale_airborne_landings()
+    except Exception as e:
+        logging.error(f"❌ Stale-airborne-landing notification error: {e}")
+    try:
+        check_aircraft_heading_to_mex(states)
+    except Exception as e:
+        logging.error(f"❌ MEX-bound flight detection error: {e}")
+    try:
+        check_aircraft_approach_alerts(states)
+    except Exception as e:
+        logging.error(f"❌ Aircraft approach alert error: {e}")
+    try:
+        check_callsign_approach_alerts(states)
+    except Exception as e:
+        logging.error(f"❌ Callsign approach alert error: {e}")
+
+    db_connection = get_connection()
+    try:
+        ingest_snapshot(states, db_connection)
+    finally:
+        db_connection.close()
+
+    return len(states["states"])
+
+
+if __name__ == "__main__":
+    configure_logging()
+    run_ingest_cycle()
