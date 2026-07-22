@@ -991,6 +991,69 @@ def get_latest_snapshot():
     return max_ts, aircraft
 
 
+NEARBY_TRAFFIC_RADIUS_KM = 30
+
+
+def get_aircraft_near_airport(iata, radius_km=NEARBY_TRAFFIC_RADIUS_KM, conn=None):
+    """Return every aircraft in the most recent snapshot within radius_km of the
+    given airport (by IATA code) -- any traffic, not just the watched_aircraft/
+    watched_callsigns lists. [] if the airport is unknown/not yet enriched or
+    there's no current snapshot. Distance filtering happens in SQL (same
+    haversine formula as SEGMENT_CHANGED_SQL above) rather than pulling every
+    aircraft on the planet back to Python just to discard most of them."""
+    owns_conn = conn is None
+    conn = conn or get_connection()
+    try:
+        airport = get_airport_by_iata(iata, conn=conn)
+        if not airport or airport["latitude"] is None or airport["longitude"] is None:
+            return []
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT MAX(timestamp) FROM states;")
+            max_ts = cur.fetchone()[0]
+            if max_ts is None:
+                return []
+
+            cur.execute(
+                """
+                SELECT icao24, callsign, longitude, latitude, on_ground, ground_speed, true_track, distance_km
+                FROM (
+                    SELECT icao24, callsign, longitude, latitude, on_ground, ground_speed, true_track,
+                           2 * 6371 * ASIN(SQRT(
+                               POWER(SIN(RADIANS((latitude - %(lat)s) / 2)), 2) +
+                               COS(RADIANS(%(lat)s)) * COS(RADIANS(latitude)) *
+                               POWER(SIN(RADIANS((longitude - %(lon)s) / 2)), 2)
+                           )) AS distance_km
+                    FROM states
+                    WHERE timestamp = %(ts)s
+                      AND longitude IS NOT NULL
+                      AND latitude IS NOT NULL
+                ) nearby
+                WHERE distance_km <= %(radius)s
+                ORDER BY distance_km;
+                """,
+                {"lat": airport["latitude"], "lon": airport["longitude"], "ts": max_ts, "radius": radius_km},
+            )
+            rows = cur.fetchall()
+    finally:
+        if owns_conn:
+            conn.close()
+
+    return [
+        {
+            "icao24": icao24,
+            "callsign": callsign.strip() if callsign else None,
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+            "on_ground": on_ground,
+            "ground_speed": float(ground_speed) if ground_speed is not None else None,
+            "true_track": float(true_track) if true_track is not None else None,
+            "distance_km": round(float(distance_km), 1),
+        }
+        for icao24, callsign, longitude, latitude, on_ground, ground_speed, true_track, distance_km in rows
+    ]
+
+
 def get_last_ingest_summary(conn=None):
     """Return {fetched_at, states_count} for the most recently ingested snapshot,
     or None if `states` is empty. states_count is every row sharing that exact

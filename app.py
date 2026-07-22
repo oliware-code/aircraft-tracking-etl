@@ -9,6 +9,9 @@ from flask import Flask, Response, jsonify, render_template, request
 
 from db_connection import get_connection
 from queries import (
+    NEARBY_TRAFFIC_RADIUS_KM,
+    get_aircraft_near_airport,
+    get_airport_by_iata,
     get_all_airports,
     get_callsigns_by_icao24,
     get_current_flight_trail,
@@ -25,7 +28,7 @@ from queries import (
     get_watched_callsign_flights,
     get_watched_callsign_status,
 )
-from status_watch import load_callsign_watchlist, load_watchlist_with_names
+from status_watch import load_callsign_watchlist, load_watched_airports, load_watchlist_with_names
 
 app = Flask(__name__)
 
@@ -362,6 +365,52 @@ def data():
             "states_count": last_ingest["states_count"],
             "fetched_at_epoch": int(last_ingest["fetched_at"].timestamp()),
         },
+    )
+
+
+@app.route("/nearby-traffic")
+def nearby_traffic():
+    """Any aircraft within NEARBY_TRAFFIC_RADIUS_KM of a watched_airports entry
+    (notify_watchlist.yaml) -- not just the watched_aircraft/watched_callsigns
+    lists. Backs /named's opt-in "nearby traffic" map switch; only fetched by
+    the frontend while that switch is on.
+    """
+    conn = get_connection()
+    try:
+        airports = []
+        by_icao24 = {}
+        for iata in load_watched_airports():
+            airport = get_airport_by_iata(iata, conn=conn)
+            if not airport or airport["latitude"] is None or airport["longitude"] is None:
+                continue
+            airports.append({"iata": iata, "latitude": airport["latitude"], "longitude": airport["longitude"]})
+
+            for a in get_aircraft_near_airport(iata, conn=conn):
+                # An aircraft near more than one watched airport keeps whichever is closest.
+                existing = by_icao24.get(a["icao24"])
+                if existing is None or a["distance_km"] < existing["distance_km"]:
+                    a["nearest_airport"] = iata
+                    by_icao24[a["icao24"]] = a
+    finally:
+        conn.close()
+
+    return jsonify(
+        markers=[
+            {
+                "icao24": a["icao24"],
+                "callsign": a["callsign"],
+                "lat": a["latitude"],
+                "lon": a["longitude"],
+                "on_ground": a["on_ground"],
+                "heading": 0 if a["on_ground"] else (a["true_track"] or 0),
+                "ground_speed": a["ground_speed"] * 3.6 if a["ground_speed"] is not None else None,
+                "distance_km": a["distance_km"],
+                "nearest_airport": a["nearest_airport"],
+            }
+            for a in by_icao24.values()
+        ],
+        airports=airports,
+        radius_km=NEARBY_TRAFFIC_RADIUS_KM,
     )
 
 

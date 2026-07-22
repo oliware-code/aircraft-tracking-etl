@@ -172,6 +172,11 @@
         <span class="slider"></span>
       </label>
       <span>Show flight trails</span>
+      <label class="switch">
+        <input type="checkbox" id="nearby-toggle">
+        <span class="slider"></span>
+      </label>
+      <span>Show nearby traffic</span>
       <span id="last-ingest-info">
         {% if last_ingest %}
           <span class="ingest-badge">
@@ -435,6 +440,59 @@
       });
     }
     trailToggle.addEventListener('change', applyTrailVisibility);
+
+    // "Nearby traffic": any aircraft within radius_km of a watched_airports entry
+    // (notify_watchlist.yaml), not just the watched_aircraft/watched_callsigns
+    // markers above. Opt-in and off by default -- only fetched from /nearby-traffic
+    // while the switch is on, so it costs nothing when nobody's using it.
+    const nearbyLayer = L.layerGroup();
+    const nearbyRadiusLayer = L.layerGroup();
+    const nearbyToggle = document.getElementById('nearby-toggle');
+
+    function renderNearbyTraffic(markers, airportList, radiusKm) {
+      nearbyLayer.clearLayers();
+      nearbyRadiusLayer.clearLayers();
+
+      airportList.forEach((a) => {
+        L.circle([a.latitude, a.longitude], {
+          radius: radiusKm * 1000,
+          color: '#94a3b8',
+          weight: 1,
+          dashArray: '4,4',
+          fill: false,
+        }).addTo(nearbyRadiusLayer);
+      });
+
+      markers.forEach((m) => {
+        L.marker([m.lat, m.lon], { icon: planeIcon(m.on_ground, m.heading, m.callsign, null, null, 'nearby') })
+          .addTo(nearbyLayer)
+          .bindPopup(`${m.callsign || m.icao24}<br>${m.on_ground ? 'on ground' : 'airborne'} · ${m.distance_km} km from ${m.nearest_airport}`);
+      });
+    }
+
+    function applyNearbyVisibility() {
+      if (nearbyToggle.checked) {
+        nearbyLayer.addTo(map);
+        nearbyRadiusLayer.addTo(map);
+      } else {
+        map.removeLayer(nearbyLayer);
+        map.removeLayer(nearbyRadiusLayer);
+      }
+    }
+
+    function refreshNearbyTraffic() {
+      if (!nearbyToggle.checked) return;
+      fetch('/nearby-traffic')
+        .then((r) => r.json())
+        .then((data) => renderNearbyTraffic(data.markers, data.airports, data.radius_km))
+        .catch((err) => console.error('Failed to refresh nearby traffic:', err));
+    }
+
+    nearbyToggle.addEventListener('change', () => {
+      applyNearbyVisibility();
+      refreshNearbyTraffic();
+    });
+    applyNearbyVisibility();
 
     // Great-circle destination point given a start, bearing (degrees), and distance (km).
     function destinationPoint(lat, lon, headingDeg, distanceKm) {
@@ -798,6 +856,7 @@
           renderLastIngest(data.last_ingest);
         })
         .catch((err) => console.error('Failed to refresh named aircraft data:', err));
+      refreshNearbyTraffic();
     }
     // Refresh the moment a cron ingest cycle commits, instead of guessing an interval.
     const snapshotEvents = new EventSource('/events');

@@ -66,6 +66,15 @@ def load_callsign_watchlist(path=WATCHLIST_PATH):
     return list(dict.fromkeys(callsign.strip().upper() for callsign in data.get("watched_callsigns", [])))
 
 
+def load_watched_airports(path=WATCHLIST_PATH):
+    """Return the watched_airports IATA codes in the same order they're listed
+    in the YAML file (deduplicated, first occurrence wins). Not used for
+    notifications -- these drive /named's "nearby traffic" map switch."""
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    return list(dict.fromkeys(iata.strip().upper() for iata in data.get("watched_airports", [])))
+
+
 def _send_status_change_notification(icao24, callsign, new_on_ground, conn):
     """Build and send the "landed"/"airborne" message, shared by the icao24-based
     and callsign-based watchlists."""
