@@ -481,7 +481,7 @@
       markers.forEach((m) => {
         L.marker([m.lat, m.lon], { icon: planeIcon(m.on_ground, m.heading, m.callsign, null, null, 'nearby') })
           .addTo(nearbyLayer)
-          .bindPopup(`${m.callsign || m.icao24}<br>${m.on_ground ? 'on ground' : 'airborne'} · ${m.distance_km} km from ${m.nearest_airport}`);
+          .bindPopup(`${m.callsign || m.icao24}<br>${m.on_ground ? 'on ground' : 'airborne'}${m.altitude != null ? ` · ${Math.round(m.altitude)} m` : ''}<br>${m.distance_km} km from ${m.nearest_airport}`);
       });
     }
 
@@ -592,7 +592,7 @@
         });
         const marker = L.marker([m.lat, m.lon], { icon: planeIcon(m.on_ground, m.heading, m.friendly_name, m.last_seen_epoch, m.route, m.tracked_by) })
           .addTo(markerLayer)
-          .bindPopup(`<strong>${m.friendly_name}</strong><br>${m.callsign || '(no callsign)'}<br>${m.on_ground ? 'on ground' : 'airborne'}`);
+          .bindPopup(`<strong>${m.friendly_name}</strong><br>${m.callsign || '(no callsign)'}<br>${m.on_ground ? 'on ground' : 'airborne'}${m.altitude != null ? ` · ${Math.round(m.altitude)} m` : ''}`);
 
         if (!m.on_ground && m.ground_speed != null && m.heading != null) {
           interpolated.push({

@@ -227,6 +227,11 @@ def _build_named_data():
                         "tracked_by": a["tracked_by"],
                         "on_ground": a["status"]["status"] == "on ground",
                         "last_seen_epoch": a["status"]["last_seen_epoch"],
+                        "altitude": (
+                            float(a["status"]["altitude"])
+                            if a["status"]["altitude"] is not None
+                            else None
+                        ),
                         "ground_speed": (
                             float(a["status"]["ground_speed"])
                             if a["status"]["ground_speed"] is not None
@@ -423,6 +428,7 @@ def nearby_traffic():
                 "on_ground": a["on_ground"],
                 "heading": 0 if a["on_ground"] else (a["true_track"] or 0),
                 "ground_speed": a["ground_speed"] * 3.6 if a["ground_speed"] is not None else None,
+                "altitude": a["altitude"],
                 "distance_km": a["distance_km"],
                 "nearest_airport": a["nearest_airport"],
             }

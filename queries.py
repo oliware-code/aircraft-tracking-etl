@@ -1016,9 +1016,11 @@ def get_aircraft_near_airport(iata, radius_km=NEARBY_TRAFFIC_RADIUS_KM, conn=Non
 
             cur.execute(
                 """
-                SELECT icao24, callsign, longitude, latitude, on_ground, ground_speed, true_track, distance_km
+                SELECT icao24, callsign, longitude, latitude, on_ground, ground_speed, true_track,
+                       geo_altitude, barometric_altitude, distance_km
                 FROM (
                     SELECT icao24, callsign, longitude, latitude, on_ground, ground_speed, true_track,
+                           geo_altitude, barometric_altitude,
                            2 * 6371 * ASIN(SQRT(
                                POWER(SIN(RADIANS((latitude - %(lat)s) / 2)), 2) +
                                COS(RADIANS(%(lat)s)) * COS(RADIANS(latitude)) *
@@ -1048,9 +1050,15 @@ def get_aircraft_near_airport(iata, radius_km=NEARBY_TRAFFIC_RADIUS_KM, conn=Non
             "on_ground": on_ground,
             "ground_speed": float(ground_speed) if ground_speed is not None else None,
             "true_track": float(true_track) if true_track is not None else None,
+            "altitude": float(geo_altitude if geo_altitude is not None else barometric_altitude)
+            if geo_altitude is not None or barometric_altitude is not None
+            else None,
             "distance_km": round(float(distance_km), 1),
         }
-        for icao24, callsign, longitude, latitude, on_ground, ground_speed, true_track, distance_km in rows
+        for (
+            icao24, callsign, longitude, latitude, on_ground, ground_speed, true_track,
+            geo_altitude, barometric_altitude, distance_km,
+        ) in rows
     ]
 
 
