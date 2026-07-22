@@ -35,12 +35,6 @@ def _is_non_amx(callsign):
     return callsign is not None and not callsign.upper().startswith("AMX")
 
 
-def _label_for(icao24, callsign, conn):
-    friendly_name = get_friendly_name(icao24, conn=conn) if icao24 else None
-    identifier = f"{html.escape(callsign)} / {icao24}" if callsign else icao24
-    return f"<b>{html.escape(friendly_name)}</b> ({identifier})" if friendly_name else identifier
-
-
 def check_aircraft_heading_to_mex(states, conn=None):
     """For each watched_aircraft (icao24 list) whose current callsign
     resolves to a route destined for MEX, send exactly one notification per
@@ -84,18 +78,25 @@ def check_aircraft_heading_to_mex(states, conn=None):
                 continue
 
             longitude, latitude, ground_speed = state[5], state[6], state[9]
-            eta_text = ""
+            eta_text = "--"
             if longitude is not None and latitude is not None and ground_speed and ground_speed > 0:
                 destination = get_airport_by_iata(DESTINATION_IATA, conn=conn)
                 if destination and destination["latitude"] is not None and destination["longitude"] is not None:
                     distance_km = haversine_km(latitude, longitude, destination["latitude"], destination["longitude"])
                     eta_minutes = (distance_km / (ground_speed * 3.6)) * 60
-                    eta_text = f", ETA ~{eta_minutes:.0f} min"
+                    hours, minutes = divmod(int(round(eta_minutes)), 60)
+                    eta_text = f"{hours}h {minutes:02d}m" if hours else f"{minutes}m"
 
-            label = _label_for(icao24, callsign, conn)
+            friendly_name = get_friendly_name(icao24, conn=conn) or icao24
+            info = get_aircraft_info(icao24, conn=conn)
+            registration = info["registration"] if info else None
+            aircraft_text = f"{registration} / {icao24}" if registration else icao24
             origin_text = route["iata_origin"] or "an unknown origin"
             prefix = "🚨 " if _is_non_amx(callsign) else ""
-            message = f"{prefix}✈️ {label} is heading to {DESTINATION_IATA} from {origin_text}{eta_text}."
+            message = (
+                f"{prefix}✈️ {html.escape(friendly_name)} ({html.escape(aircraft_text)}) "
+                f"is heading to {DESTINATION_IATA} from {origin_text} ({html.escape(callsign)}), ETA {eta_text}"
+            )
 
             logging.info(f"MEX-bound flight detected: {message}")
             send_notification(message, parse_mode="HTML")
