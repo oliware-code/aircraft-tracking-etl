@@ -402,6 +402,26 @@
     {% endif %}
   </div>
 
+  <div class="tracked-section">
+    <h3 style="font-size:0.95rem; margin:0 0 0.3rem;">OpenSky uptime — last 72h</h3>
+    {% if uptime_history %}
+      {% set n = uptime_history | length %}
+      <svg viewBox="0 0 {{ n * 10 }} 100" preserveAspectRatio="none" style="width:100%; height:40px; display:block;">
+        {% for h in uptime_history %}
+          <rect x="{{ loop.index0 * 10 }}" y="0" width="8" height="100" fill="{{ '#22c55e' if h.up else '#ef4444' }}" opacity="0.85">
+            <title>{{ 'up' if h.up else 'DOWN' }} — {{ h.bucket_label }}</title>
+          </rect>
+        {% endfor %}
+      </svg>
+      <div style="display:flex; justify-content:space-between; color:#888; font-size:0.75rem;">
+        <span>72h ago</span>
+        <span>now</span>
+      </div>
+    {% else %}
+      <p style="color:#888; font-size:0.85rem;">No uptime history yet.</p>
+    {% endif %}
+  </div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/static/plane-icon.js"></script>
   <script src="/static/airport-icon.js"></script>

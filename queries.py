@@ -1127,6 +1127,46 @@ def get_states_ingest_history(hours=72, conn=None):
     return history
 
 
+def get_opensky_uptime_history(hours=72, bucket_minutes=15, conn=None):
+    """Return one {bucket_start, up} entry per bucket_minutes-minute window for
+    the last `hours` hours, oldest first -- up is True if at least one states
+    row was ingested during that window (some cron cycle in it succeeded),
+    False if the window is completely empty. main.py's cron cadence is ~2
+    minutes, so an entirely empty bucket_minutes-wide window implies OpenSky
+    (or the cron job itself) was down for that whole stretch, not just a
+    single missed cycle. Unlike get_states_ingest_history above, empty
+    buckets are never omitted -- they're the whole point, for /named's outage
+    bar chart. Each bucket is a single cheap indexed EXISTS lookup, same
+    "one lookup per bucket beats aggregating everything" tradeoff as above.
+    """
+    owns_conn = conn is None
+    conn = conn or get_connection()
+    try:
+        with conn.cursor() as cur:
+            now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+            now -= timedelta(minutes=now.minute % bucket_minutes)
+            total_buckets = (hours * 60) // bucket_minutes
+            history = []
+            for i in range(total_buckets, -1, -1):
+                bucket_start = now - timedelta(minutes=bucket_minutes * i)
+                bucket_end = bucket_start + timedelta(minutes=bucket_minutes)
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM states WHERE timestamp >= %s AND timestamp < %s
+                    );
+                    """,
+                    (bucket_start, bucket_end),
+                )
+                up = cur.fetchone()[0]
+                history.append({"bucket_start": bucket_start, "up": up})
+    finally:
+        if owns_conn:
+            conn.close()
+
+    return history
+
+
 if __name__ == "__main__":
     import sys
 

@@ -21,6 +21,7 @@ from queries import (
     get_last_ingest_summary,
     get_latest_snapshot,
     get_named_aircraft_status,
+    get_opensky_uptime_history,
     get_position_history,
     get_route_for_callsign,
     get_states_ingest_history,
@@ -344,6 +345,14 @@ def index():
         }
         for h in get_states_ingest_history(hours=72)
     ]
+    uptime_history = [
+        {
+            "bucket_epoch": int(h["bucket_start"].timestamp()),
+            "bucket_label": h["bucket_start"].strftime("%a %H:%M UTC"),
+            "up": h["up"],
+        }
+        for h in get_opensky_uptime_history(hours=72)
+    ]
     return render_template(
         "named.html",
         aircraft=aircraft,
@@ -352,6 +361,7 @@ def index():
         callsign_flights=callsign_flights,
         last_ingest=last_ingest,
         ingest_history=ingest_history,
+        uptime_history=uptime_history,
     )
 
 
